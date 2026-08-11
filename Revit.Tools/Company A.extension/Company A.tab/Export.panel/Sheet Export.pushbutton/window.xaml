@@ -1,0 +1,916 @@
+<Window
+    xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+    xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
+    Title='Kidzink Sheet Export'
+    Width='960' Height='680'
+    MinWidth='700' MinHeight='480'
+    WindowStartupLocation='CenterScreen'
+    Background='#C0C0C0'>
+
+  <Window.Resources>
+    <BooleanToVisibilityConverter x:Key='BoolToVis'/>
+    <!-- ═══ Shared styles, copied from Family Browser window.xaml ═══ -->
+    <Style x:Key='KzkBtn' TargetType='Button'>
+      <Setter Property='Background'   Value='#E43C2F'/>
+      <Setter Property='Foreground'   Value='#FFFFFF'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='Padding'      Value='14,6'/>
+      <Setter Property='FontSize'     Value='12'/>
+      <Setter Property='FontWeight'   Value='SemiBold'/>
+      <Setter Property='Cursor'       Value='Hand'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='Button'>
+            <Border Background='{TemplateBinding Background}'
+                    CornerRadius='4'
+                    Padding='{TemplateBinding Padding}'>
+              <ContentPresenter HorizontalAlignment='Center'
+                                VerticalAlignment='Center'/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsMouseOver' Value='True'>
+                <Setter Property='Background' Value='#C73652'/>
+              </Trigger>
+              <Trigger Property='IsPressed' Value='True'>
+                <Setter Property='Background' Value='#A02040'/>
+              </Trigger>
+              <Trigger Property='IsEnabled' Value='False'>
+                <Setter Property='Background' Value='#AAAAAA'/>
+                <Setter Property='Foreground' Value='#888888'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key='KzkBtnGhost' TargetType='Button' BasedOn='{StaticResource KzkBtn}'>
+      <Setter Property='Background' Value='#808080'/>
+      <Setter Property='Foreground' Value='#FFFFFF'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='BorderBrush' Value='#999999'/>
+      <Style.Triggers>
+        <Trigger Property='IsMouseOver' Value='True'>
+          <Setter Property='Background' Value='#666666'/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- Header button style: translucent white, for use on red header bar -->
+    <Style x:Key='KzkBtnHeader' TargetType='Button' BasedOn='{StaticResource KzkBtn}'>
+      <Setter Property='Background' Value='#33FFFFFF'/>
+      <Setter Property='Foreground' Value='#FFFFFF'/>
+      <Style.Triggers>
+        <Trigger Property='IsMouseOver' Value='True'>
+          <Setter Property='Background' Value='#55FFFFFF'/>
+        </Trigger>
+        <Trigger Property='IsPressed' Value='True'>
+          <Setter Property='Background' Value='#22FFFFFF'/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- Step pill style: default (upcoming) / active / done, toggled in code-behind -->
+    <Style x:Key='KzkStepPill' TargetType='Button'>
+      <Setter Property='Background'   Value='#D4D4D4'/>
+      <Setter Property='Foreground'   Value='#555555'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='Padding'      Value='14,7'/>
+      <Setter Property='FontSize'     Value='12'/>
+      <Setter Property='FontWeight'   Value='SemiBold'/>
+      <Setter Property='Cursor'       Value='Hand'/>
+      <Setter Property='Margin'       Value='0,0,6,0'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='Button'>
+            <Border Background='{TemplateBinding Background}'
+                    CornerRadius='4'
+                    Padding='{TemplateBinding Padding}'>
+              <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- TextBox style -->
+    <Style x:Key='KzkText' TargetType='TextBox'>
+      <Setter Property='Background'        Value='#FFFFFF'/>
+      <Setter Property='Foreground'        Value='#333333'/>
+      <Setter Property='BorderBrush'       Value='#999999'/>
+      <Setter Property='BorderThickness'   Value='1'/>
+      <Setter Property='Padding'           Value='8,5'/>
+      <Setter Property='FontSize'          Value='12'/>
+      <Setter Property='CaretBrush'        Value='#333333'/>
+    </Style>
+
+    <!-- ComboBox style -->
+    <Style x:Key='KzkCombo' TargetType='ComboBox'>
+      <Setter Property='Background'        Value='#FFFFFF'/>
+      <Setter Property='Foreground'        Value='#E43C2F'/>
+      <Setter Property='FontWeight'        Value='Bold'/>
+      <Setter Property='BorderBrush'       Value='#E43C2F'/>
+      <Setter Property='BorderThickness'   Value='2'/>
+      <Setter Property='Padding'           Value='8,5'/>
+      <Setter Property='FontSize'          Value='12'/>
+    </Style>
+
+    <!-- Export Settings dropdowns -->
+    <Style x:Key='KzkComboToggle' TargetType='ComboBox'>
+      <Setter Property='Background'        Value='#808080'/>
+      <Setter Property='Foreground'        Value='#FFFFFF'/>
+      <Setter Property='FontWeight'        Value='Bold'/>
+      <Setter Property='BorderThickness'   Value='0'/>
+      <Setter Property='Padding'           Value='8,6'/>
+      <Setter Property='FontSize'          Value='12'/>
+      <Setter Property='ItemContainerStyle'>
+        <Setter.Value>
+          <Style TargetType='ComboBoxItem'>
+            <Setter Property='Background'   Value='White'/>
+            <Setter Property='Foreground'   Value='#16242E'/>
+            <Setter Property='FontWeight'   Value='SemiBold'/>
+            <Setter Property='Padding'      Value='8,6'/>
+            <Setter Property='Template'>
+              <Setter.Value>
+                <ControlTemplate TargetType='ComboBoxItem'>
+                  <Border x:Name='ItemBd' Background='{TemplateBinding Background}'
+                          Padding='{TemplateBinding Padding}'>
+                    <ContentPresenter/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property='IsHighlighted' Value='True'>
+                      <Setter TargetName='ItemBd' Property='Background' Value='#FDEAEA'/>
+                    </Trigger>
+                    <Trigger Property='IsSelected' Value='True'>
+                      <Setter TargetName='ItemBd' Property='Background' Value='#E43C2F'/>
+                      <Setter Property='Foreground' Value='White'/>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </Setter.Value>
+      </Setter>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='ComboBox'>
+            <Grid>
+              <ToggleButton x:Name='ToggleBtn' Focusable='False' ClickMode='Press'
+                            Background='{TemplateBinding Background}'
+                            IsChecked='{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}'>
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType='ToggleButton'>
+                    <Border x:Name='ToggleBd' Background='{TemplateBinding Background}' CornerRadius='4'>
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width='*'/>
+                          <ColumnDefinition Width='22'/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column='1' Text='&#9662;' Foreground='White'
+                                   FontSize='10' VerticalAlignment='Center' HorizontalAlignment='Center'/>
+                      </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property='IsMouseOver' Value='True'>
+                        <Setter TargetName='ToggleBd' Property='Background' Value='#8F8F8F'/>
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <ContentPresenter x:Name='ContentSite' IsHitTestVisible='False'
+                                Content='{TemplateBinding SelectionBoxItem}'
+                                ContentTemplate='{TemplateBinding SelectionBoxItemTemplate}'
+                                Margin='{TemplateBinding Padding}'
+                                VerticalAlignment='Center' HorizontalAlignment='Left'>
+                <ContentPresenter.Resources>
+                  <Style TargetType='TextBlock'>
+                    <Setter Property='Foreground' Value='White'/>
+                    <Setter Property='FontWeight' Value='Bold'/>
+                    <Setter Property='FontSize' Value='12'/>
+                  </Style>
+                </ContentPresenter.Resources>
+              </ContentPresenter>
+              <Popup x:Name='Popup' Placement='Bottom' AllowsTransparency='True'
+                     Focusable='False' PopupAnimation='Slide'
+                     IsOpen='{TemplateBinding IsDropDownOpen}'>
+                <Border Background='White' BorderBrush='#595959' BorderThickness='1'
+                        MinWidth='{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}'
+                        MaxHeight='{TemplateBinding MaxDropDownHeight}'>
+                  <ScrollViewer SnapsToDevicePixels='True'>
+                    <ItemsPresenter/>
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- CheckBox style: red check -->
+    <Style x:Key='KzkCheck' TargetType='CheckBox'>
+      <Setter Property='Foreground'  Value='#333333'/>
+      <Setter Property='FontSize'    Value='11'/>
+      <Setter Property='Margin'      Value='4,2,4,2'/>
+      <Setter Property='Padding'     Value='6,0,0,0'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='CheckBox'>
+            <StackPanel Orientation='Horizontal'>
+              <Border x:Name='Box' Width='16' Height='16' CornerRadius='2'
+                      BorderBrush='#999999' BorderThickness='1' Background='#FFFFFF'>
+                <Path x:Name='Tick' Data='M2,7 L6,11 L14,2' Stroke='#FFFFFF'
+                      StrokeThickness='2' Visibility='Collapsed'
+                      StrokeStartLineCap='Round' StrokeEndLineCap='Round'
+                      StrokeLineJoin='Round'/>
+              </Border>
+              <ContentPresenter Margin='{TemplateBinding Padding}'
+                                VerticalAlignment='Center'/>
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsChecked' Value='True'>
+                <Setter TargetName='Box' Property='Background' Value='#E43C2F'/>
+                <Setter TargetName='Box' Property='BorderBrush' Value='#E43C2F'/>
+                <Setter TargetName='Tick' Property='Visibility' Value='Visible'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Radio-style toggle used for the Sheet Source mode switch -->
+    <Style x:Key='KzkRadio' TargetType='RadioButton'>
+      <Setter Property='Foreground'  Value='#333333'/>
+      <Setter Property='FontSize'    Value='12'/>
+      <Setter Property='FontWeight'  Value='SemiBold'/>
+      <Setter Property='Margin'      Value='0,0,20,0'/>
+      <Setter Property='Padding'     Value='8,0,0,0'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='RadioButton'>
+            <StackPanel Orientation='Horizontal'>
+              <Border x:Name='Circle' Width='16' Height='16' CornerRadius='8'
+                      BorderBrush='#999999' BorderThickness='1' Background='#FFFFFF'>
+                <Ellipse x:Name='Dot' Width='8' Height='8' Fill='#FFFFFF' Visibility='Collapsed'/>
+              </Border>
+              <ContentPresenter Margin='{TemplateBinding Padding}' VerticalAlignment='Center'/>
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsChecked' Value='True'>
+                <Setter TargetName='Circle' Property='BorderBrush' Value='#E43C2F'/>
+                <Setter TargetName='Dot' Property='Fill' Value='#E43C2F'/>
+                <Setter TargetName='Dot' Property='Visibility' Value='Visible'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key='KzkSpinBtn' TargetType='RepeatButton'>
+      <Setter Property='Background'      Value='#808080'/>
+      <Setter Property='Foreground'      Value='#FFFFFF'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='FontSize'        Value='7'/>
+      <Setter Property='Focusable'       Value='False'/>
+      <Setter Property='Cursor'          Value='Hand'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='RepeatButton'>
+            <Border x:Name='SpBd' Background='{TemplateBinding Background}'>
+              <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsMouseOver' Value='True'>
+                <Setter TargetName='SpBd' Property='Background' Value='#666666'/>
+              </Trigger>
+              <Trigger Property='IsEnabled' Value='False'>
+                <Setter TargetName='SpBd' Property='Background' Value='#D0D0D0'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Card: white content panel sitting on the grey window background -->
+    <Style x:Key='KzkCard' TargetType='Border'>
+      <Setter Property='Background'      Value='#FFFFFF'/>
+      <Setter Property='BorderBrush'      Value='#A0A0A0'/>
+      <Setter Property='BorderThickness'  Value='1'/>
+      <Setter Property='Padding'          Value='14'/>
+    </Style>
+
+    <!-- Section title band -->
+    <Style x:Key='KzkSectionGrey' TargetType='TextBlock'>
+      <Setter Property='Background'  Value='#808080'/>
+      <Setter Property='Foreground'  Value='#FFFFFF'/>
+      <Setter Property='FontWeight'  Value='Bold'/>
+      <Setter Property='FontSize'    Value='12'/>
+      <Setter Property='Padding'     Value='10,6'/>
+    </Style>
+
+    <Style x:Key='KzkHint' TargetType='TextBlock'>
+      <Setter Property='FontSize'    Value='10'/>
+      <Setter Property='Foreground'  Value='#888888'/>
+      <Setter Property='Margin'      Value='0,6,0,10'/>
+    </Style>
+
+    <!-- Edit Profile toggle button -->
+    <Style x:Key='KzkEditToggle' TargetType='ToggleButton'>
+      <Setter Property='Background'      Value='#808080'/>
+      <Setter Property='Foreground'      Value='#FFFFFF'/>
+      <Setter Property='BorderThickness' Value='0'/>
+      <Setter Property='Padding'         Value='14,6'/>
+      <Setter Property='FontSize'        Value='12'/>
+      <Setter Property='FontWeight'      Value='SemiBold'/>
+      <Setter Property='Cursor'          Value='Hand'/>
+      <Setter Property='Template'>
+        <Setter.Value>
+          <ControlTemplate TargetType='ToggleButton'>
+            <Border x:Name='Bd' Background='{TemplateBinding Background}'
+                    CornerRadius='4' Padding='{TemplateBinding Padding}'>
+              <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property='IsChecked' Value='True'>
+                <Setter TargetName='Bd' Property='Background' Value='#E43C2F'/>
+              </Trigger>
+              <Trigger Property='IsMouseOver' Value='True'>
+                <Setter TargetName='Bd' Property='Background' Value='#666666'/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height='52'/>   <!-- header bar -->
+      <RowDefinition Height='Auto'/> <!-- step nav -->
+      <RowDefinition Height='*'/>    <!-- step content -->
+      <RowDefinition Height='Auto'/> <!-- footer -->
+    </Grid.RowDefinitions>
+
+    <!-- ═══ HEADER BAR ═══════════════════════════════════════════════ -->
+    <Border Grid.Row='0' Background='#E43C2F'>
+      <DockPanel Margin='16,0'>
+        <StackPanel DockPanel.Dock='Left' Orientation='Horizontal' VerticalAlignment='Center'>
+          <!-- Logo: collapsed until script.py finds logo.png next to the pushbutton -->
+          <Image x:Name='ImgLogo' Height='28' Margin='0,0,10,0' Visibility='Collapsed'/>
+          <TextBlock Text='Sheet Export' Foreground='#FFFFFF'
+                     FontSize='16' FontWeight='Bold'/>
+        </StackPanel>
+        <StackPanel DockPanel.Dock='Right' Orientation='Horizontal' Margin='24,0,0,0'
+                    VerticalAlignment='Center'>
+          <Button x:Name='BtnSettings' Content='⚙ Settings' Style='{StaticResource KzkBtnHeader}'/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <!-- ═══ STEP NAV (3 steps: Sheet Source -> Profile -> Export Settings) ═══ -->
+    <Border Grid.Row='1' Background='#C0C0C0' BorderBrush='#A0A0A0'
+            BorderThickness='0,0,0,1' Padding='16,10'>
+      <StackPanel Orientation='Horizontal' HorizontalAlignment='Center'>
+        <Button x:Name='StepBtn0' Content='Sheet Source'    Style='{StaticResource KzkStepPill}' Tag='0'/>
+        <Button x:Name='StepBtn1' Content='Profile'         Style='{StaticResource KzkStepPill}' Tag='1'/>
+        <Button x:Name='StepBtn2' Content='Export Settings' Style='{StaticResource KzkStepPill}' Tag='2'/>
+        <Button x:Name='StepBtn3' Content='View Export'     Style='{StaticResource KzkStepPill}' Tag='3'/>
+      </StackPanel>
+    </Border>
+
+    <!-- ═══ STEP CONTENT ═════════════════════════════════════════════ -->
+    <Grid Grid.Row='2' Margin='16'>
+
+      <!-- STEP 1: SHEET SOURCE -->
+      <Border x:Name='Panel0' Style='{StaticResource KzkCard}' Visibility='Visible'>
+        <DockPanel>
+          <TextBlock DockPanel.Dock='Top' Text='Sheet Source' Style='{StaticResource KzkSectionGrey}'/>
+          <TextBlock DockPanel.Dock='Top' Style='{StaticResource KzkHint}'
+                     Text='Choose whether to export from a Sheet List schedule or by hand-picking sheets.'/>
+
+          <StackPanel DockPanel.Dock='Top' Orientation='Horizontal' Margin='0,0,0,14'>
+            <RadioButton x:Name='RbBySelection' Content='By Selection' Style='{StaticResource KzkRadio}'
+                         GroupName='SheetSourceMode' IsChecked='True'/>
+            <RadioButton x:Name='RbBySchedule' Content='By Schedule' Style='{StaticResource KzkRadio}'
+                         GroupName='SheetSourceMode'/>
+          </StackPanel>
+
+          <!-- BY SCHEDULE sub-panel -->
+          <StackPanel x:Name='SubPanelSchedule' DockPanel.Dock='Top' Visibility='Visible'>
+            <TextBlock Text='Select Drawing List' FontWeight='Bold' Foreground='#16242E' Margin='0,0,0,6'/>
+            <ComboBox x:Name='CboScheduleSource' Style='{StaticResource KzkCombo}' Width='360' HorizontalAlignment='Left'/>
+          </StackPanel>
+
+          <!-- BY SELECTION sub-panel -->
+          <DockPanel x:Name='SubPanelSelection' Visibility='Collapsed'>
+            <TextBlock DockPanel.Dock='Top' Text='Select Sheets' FontWeight='Bold' Foreground='#16242E' Margin='0,0,0,6'/>
+
+            <!-- Filter: field + Revit-style mode + value -->
+            <StackPanel DockPanel.Dock='Top' Orientation='Horizontal' Margin='0,0,0,8'>
+              <ComboBox x:Name='CboSheetFilterField' Style='{StaticResource KzkComboToggle}' Width='180' Margin='0,0,6,0'/>
+              <ComboBox x:Name='CboSheetFilterMode'  Style='{StaticResource KzkComboToggle}' Width='140' Margin='0,0,6,0'/>
+              <TextBox x:Name='TxtSheetFilterValue' Style='{StaticResource KzkText}' Width='200' Margin='0,0,6,0'
+                       ToolTip='Filter value...'/>
+              <Button x:Name='BtnSheetFilterClear' Content='Clear' Style='{StaticResource KzkBtnGhost}'/>
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock='Top' Orientation='Horizontal' Margin='0,0,0,8'>
+              <Button x:Name='BtnCheckAllSheets'     Content='Check All'     Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+              <Button x:Name='BtnUncheckAllSheets'   Content='Uncheck All'   Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+              <Button x:Name='BtnToggleAllSheets'    Content='Toggle All'    Style='{StaticResource KzkBtnGhost}' Margin='0,0,12,0'/>
+              <Button x:Name='BtnExpandAllSheets'    Content='Expand All'    Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+              <Button x:Name='BtnCollapseAllSheets'  Content='Collapse All'  Style='{StaticResource KzkBtnGhost}' Margin='0,0,12,0'/>
+              <TextBlock Text='Tip: Shift+click a sheet to select the range within its collection'
+                         FontSize='10' Foreground='#888888' VerticalAlignment='Center'/>
+            </StackPanel>
+            <TextBlock x:Name='TxtSheetCountSelected' DockPanel.Dock='Bottom' Style='{StaticResource KzkHint}'
+                       Margin='0,8,0,0' Text=''/>
+
+            <!-- Project-Browser-style tree: collapsible group per Sheet
+                 Collection, sheets nested underneath -->
+            <ScrollViewer VerticalScrollBarVisibility='Auto' MinHeight='120'
+                          VerticalAlignment='Stretch' Margin='0,4,0,0'>
+              <ItemsControl x:Name='IcSheetGroups' VerticalAlignment='Top'>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin='0,0,0,2'>
+                      <Border Background='#F2F2F2' CornerRadius='3' Padding='3,3,3,3'>
+                        <StackPanel Orientation='Horizontal'>
+                          <Button Content='{Binding Chevron}' Width='18' Height='18' Padding='0'
+                                  Background='Transparent' BorderThickness='0' Foreground='#808080'
+                                  FontSize='9' Cursor='Hand'/>
+                          <CheckBox Style='{StaticResource KzkCheck}' IsChecked='{Binding IsChecked, Mode=TwoWay}'
+                                    Margin='4,0,4,0'/>
+                          <TextBlock Text='&#128193;' Foreground='#E8C15A' FontSize='11' Margin='0,0,4,0'/>
+                          <TextBlock Text='{Binding HeaderText}' FontWeight='Bold' Foreground='#16242E'
+                                     Tag='hdrtext'
+                                     VerticalAlignment='Center' FontSize='11'/>
+                        </StackPanel>
+                      </Border>
+                      <ItemsControl ItemsSource='{Binding Sheets}'
+                                     Visibility='{Binding IsExpanded, Converter={StaticResource BoolToVis}}'
+                                     Margin='24,2,0,0'>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <CheckBox Style='{StaticResource KzkCheck}' IsChecked='{Binding IsChecked, Mode=TwoWay}'
+                                      Margin='0,1,0,1'>
+                              <TextBlock FontSize='11'>
+                                <Run Text='{Binding Number}' FontWeight='Bold'/>
+                                <Run Text=' — '/>
+                                <Run Text='{Binding Name}'/>
+                              </TextBlock>
+                            </CheckBox>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </DockPanel>
+        </DockPanel>
+      </Border>
+
+      <!-- STEP 2: PROFILE -->
+      <Border x:Name='Panel1' Style='{StaticResource KzkCard}' Visibility='Collapsed'>
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition x:Name='RowProfileList' Height='*'/>
+            <RowDefinition x:Name='RowEditProfile' Height='Auto'/>
+          </Grid.RowDefinitions>
+
+          <DockPanel Grid.Row='0'>
+            <TextBlock DockPanel.Dock='Top' Text='Filename Profile' Style='{StaticResource KzkSectionGrey}'/>
+            <TextBlock DockPanel.Dock='Top' Style='{StaticResource KzkHint}'
+                       Text='Select a profile then click Use Profile, or Edit Profile to change its parameters/separators.'/>
+            <StackPanel DockPanel.Dock='Top' Orientation='Horizontal' Margin='0,0,0,10'>
+              <TextBlock x:Name='TxtActiveProfile' FontSize='11' FontWeight='Bold'
+                         Foreground='#E43C2F' VerticalAlignment='Center' Text=''/>
+              <Grid Margin='14,0,0,0' VerticalAlignment='Center'>
+                <TextBox x:Name='TxtSearchProfile' Style='{StaticResource KzkText}' Width='200'
+                         ToolTip='Search profiles by name or parameter...'/>
+                <TextBlock x:Name='TxtSearchProfileGhost' Text='Search profile'
+                           Foreground='#999999' FontStyle='Italic' FontSize='12'
+                           Margin='8,0,0,0' VerticalAlignment='Center'
+                           IsHitTestVisible='False'/>
+              </Grid>
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock='Top' Orientation='Horizontal' Margin='0,0,0,10'>
+              <Button x:Name='BtnUseProfile'    Content='Use Profile'      Style='{StaticResource KzkBtn}'      Margin='0,0,8,0'/>
+              <Button x:Name='BtnRenameProfile' Content='Rename Profile'   Style='{StaticResource KzkBtn}'      Margin='0,0,8,0'/>
+              <Button x:Name='BtnNewProfile'    Content='+ New Profile'    Style='{StaticResource KzkBtnGhost}' Margin='0,0,8,0'/>
+              <Button x:Name='BtnDeleteProfile' Content='Delete Profile'   Style='{StaticResource KzkBtnGhost}' Margin='0,0,8,0'/>
+              <ToggleButton x:Name='BtnEditProfile' Content='Edit Profile' Style='{StaticResource KzkEditToggle}' Margin='0,0,8,0'/>
+              <Button x:Name='BtnCancelEditProfile' Content='Cancel' Style='{StaticResource KzkBtnGhost}' Margin='0,0,8,0'/>
+              <Button x:Name='BtnSaveProfile'   Content='Save Profile'     Style='{StaticResource KzkBtn}'/>
+            </StackPanel>
+
+            <TextBlock x:Name='TxtEditingHint' DockPanel.Dock='Top' Style='{StaticResource KzkHint}'
+                       Margin='0,-6,0,10' Foreground='#E43C2F' FontWeight='SemiBold'
+                       Visibility='Collapsed'
+                       Text='Editing in progress — Save Profile or close Edit Profile to switch, create, or delete profiles.'/>
+
+            <ScrollViewer VerticalScrollBarVisibility='Auto'>
+              <ListView x:Name='LvProfiles' BorderThickness='0'
+                        ScrollViewer.HorizontalScrollBarVisibility='Auto'>
+                <ListView.ItemContainerStyle>
+                  <Style TargetType='ListViewItem'>
+                    <Setter Property='Padding' Value='4,10'/>
+                    <Setter Property='HorizontalContentAlignment' Value='Stretch'/>
+                    <Setter Property='Template'>
+                      <Setter.Value>
+                        <ControlTemplate TargetType='ListViewItem'>
+                          <Border x:Name='Bd' Background='{TemplateBinding Background}'
+                                  Padding='{TemplateBinding Padding}'
+                                  BorderThickness='0,0,0,1' BorderBrush='#E8E8E8'>
+                            <GridViewRowPresenter Content='{TemplateBinding Content}'
+                                Columns='{Binding Path=View.Columns, RelativeSource={RelativeSource AncestorType=ListView}}'/>
+                          </Border>
+                          <ControlTemplate.Triggers>
+                            <Trigger Property='IsSelected' Value='True'>
+                              <Setter TargetName='Bd' Property='Background' Value='#FBDAD7'/>
+                            </Trigger>
+                            <Trigger Property='IsMouseOver' Value='True'>
+                              <Setter TargetName='Bd' Property='Background' Value='#FDEAEA'/>
+                            </Trigger>
+                          </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                      </Setter.Value>
+                    </Setter>
+                  </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.View>
+                  <GridView>
+                    <GridViewColumn x:Name='ColProfileName' Header='Profile Name' Width='210' DisplayMemberBinding='{Binding Name}'/>
+                    <GridViewColumn x:Name='ColParamsFilename' Header='Parameters (Filename)' Width='500'>
+                      <GridViewColumn.CellTemplate>
+                        <DataTemplate>
+                          <Grid>
+                            <ItemsControl x:Name='ReadOnlyChips' ItemsSource='{Binding Segments}' HorizontalAlignment='Stretch'>
+                              <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                  <WrapPanel Orientation='Horizontal'/>
+                                </ItemsPanelTemplate>
+                              </ItemsControl.ItemsPanel>
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                  <Border x:Name='Chip' CornerRadius='3'
+                                          Background='#EDEDED' BorderBrush='#C8C8C8'
+                                          BorderThickness='1' Padding='6,2' Margin='0,0,3,0'
+                                          VerticalAlignment='Center'>
+                                    <TextBlock x:Name='ChipText' Text='{Binding Text}'
+                                               FontSize='12.5' TextWrapping='NoWrap'
+                                               Foreground='#16242E' FontWeight='SemiBold'/>
+                                  </Border>
+                                  <DataTemplate.Triggers>
+                                    <DataTrigger Binding='{Binding IsMissing}' Value='True'>
+                                      <Setter TargetName='Chip' Property='Background' Value='#FDEAEA'/>
+                                      <Setter TargetName='Chip' Property='BorderBrush' Value='#E43C2F'/>
+                                      <Setter TargetName='ChipText' Property='Foreground' Value='#E43C2F'/>
+                                      <Setter TargetName='ChipText' Property='FontWeight' Value='Bold'/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding='{Binding IsSeparator}' Value='True'>
+                                      <Setter TargetName='Chip' Property='Background' Value='Transparent'/>
+                                      <Setter TargetName='Chip' Property='BorderBrush' Value='Transparent'/>
+                                      <Setter TargetName='Chip' Property='Padding' Value='0'/>
+                                      <Setter TargetName='Chip' Property='Margin' Value='7,0,10,0'/>
+                                      <Setter TargetName='ChipText' Property='Foreground' Value='#E43C2F'/>
+                                      <Setter TargetName='ChipText' Property='FontWeight' Value='Bold'/>
+                                      <Setter TargetName='ChipText' Property='FontSize' Value='14'/>
+                                    </DataTrigger>
+                                  </DataTemplate.Triggers>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <ItemsControl x:Name='EditChipsControl' ItemsSource='{Binding EditRows}'
+                                          HorizontalAlignment='Stretch' Visibility='Collapsed'>
+                              <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                  <WrapPanel Orientation='Horizontal'/>
+                                </ItemsPanelTemplate>
+                              </ItemsControl.ItemsPanel>
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                  <StackPanel Orientation='Horizontal' VerticalAlignment='Center' Margin='0,2,4,2'>
+                                    <Border x:Name='EditChip' Tag='EditChip' CornerRadius='3'
+                                            Background='#EDEDED' BorderBrush='#C8C8C8' BorderThickness='1'
+                                            Padding='6,3' Cursor='SizeAll'
+                                            ToolTip='Drag this parameter and drop it before or after another one to change the filename order.&#x0a;Then ask bababa ba? They will answer bababa.'
+                                            ToolTipService.InitialShowDelay='400' ToolTipService.BetweenShowDelay='100'>
+                                      <TextBlock Text='{Binding Name}' FontSize='12.5'
+                                                 FontWeight='SemiBold' Foreground='#16242E'/>
+                                    </Border>
+                                    <TextBox x:Name='EditSepBox' Style='{StaticResource KzkText}'
+                                             Width='40' Margin='4,0,4,0' FontSize='12' FontWeight='Bold'
+                                             Foreground='#E43C2F' HorizontalContentAlignment='Center'
+                                             MaxLength='4' Text='{Binding Separator, Mode=OneWay}'/>
+                                  </StackPanel>
+                                  <DataTemplate.Triggers>
+                                    <DataTrigger Binding='{Binding IsLastRow}' Value='True'>
+                                      <Setter TargetName='EditSepBox' Property='Visibility' Value='Collapsed'/>
+                                    </DataTrigger>
+                                  </DataTemplate.Triggers>
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                          </Grid>
+                          <DataTemplate.Triggers>
+                            <DataTrigger Binding='{Binding IsEditing}' Value='True'>
+                              <Setter TargetName='ReadOnlyChips' Property='Visibility' Value='Collapsed'/>
+                              <Setter TargetName='EditChipsControl' Property='Visibility' Value='Visible'/>
+                            </DataTrigger>
+                          </DataTemplate.Triggers>
+                        </DataTemplate>
+                      </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                  </GridView>
+                </ListView.View>
+              </ListView>
+            </ScrollViewer>
+          </DockPanel>
+
+          <!-- ═══ EDIT PROFILE SUB-SECTION ═══ -->
+          <Border x:Name='PanelEditProfile' Grid.Row='1' Visibility='Collapsed'
+                  BorderBrush='#A0A0A0' BorderThickness='0,1,0,0' Margin='0,10,0,0' Padding='0,10,0,0'>
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height='Auto'/>
+                <RowDefinition Height='*'/>
+                <RowDefinition Height='Auto'/>
+                <RowDefinition Height='Auto'/>
+              </Grid.RowDefinitions>
+              <StackPanel Grid.Row='0'>
+                <TextBlock x:Name='TxtParamHeader'
+                           Text='Add Parameters' Style='{StaticResource KzkSectionGrey}'/>
+                <TextBlock Style='{StaticResource KzkHint}'
+                           Text='Tick a parameter to add it to the end of the profile above — drag chips there to reorder, click a separator to edit it.'/>
+                <TextBox x:Name='TxtSearchParam' Style='{StaticResource KzkText}'
+                         Margin='0,0,0,8' ToolTip='Search parameters...'/>
+              </StackPanel>
+              <ScrollViewer x:Name='SvParameters' Grid.Row='1' VerticalScrollBarVisibility='Auto'
+                            MinHeight='100' VerticalAlignment='Stretch'>
+                <ItemsControl x:Name='IcParameters' VerticalAlignment='Top'>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <CheckBox Style='{StaticResource KzkCheck}' Content='{Binding Name}'
+                                IsChecked='{Binding IsChecked, Mode=TwoWay}'/>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+              <StackPanel Grid.Row='2' Orientation='Horizontal' Margin='0,8,0,0'>
+                <Button x:Name='BtnCheckAll'   Content='Check All'   Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+                <Button x:Name='BtnUncheckAll' Content='Uncheck All' Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+                <Button x:Name='BtnToggleAll'  Content='Toggle All'  Style='{StaticResource KzkBtnGhost}'/>
+              </StackPanel>
+              <TextBlock Grid.Row='3' Text='Tip: Shift+click a parameter to select the range from your last click'
+                         FontSize='10' Foreground='#888888' Margin='0,6,0,0'/>
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+
+      <!-- STEP 3: EXPORT SETTINGS -->
+      <Border x:Name='Panel2' Style='{StaticResource KzkCard}' Visibility='Collapsed'>
+        <ScrollViewer VerticalScrollBarVisibility='Auto'>
+          <StackPanel>
+            <TextBlock Text='Export Settings' Style='{StaticResource KzkSectionGrey}'/>
+
+            <!-- ═══ PRE-EXPORT ACTIONS ═══ -->
+            <Border Background='#FFF3F2' BorderBrush='#F0C4C0' BorderThickness='1'
+                    CornerRadius='3' Padding='14' Margin='0,16,0,0'>
+              <StackPanel>
+                <TextBlock Text='Pre-Export Actions' FontWeight='Bold' Foreground='#16242E' Margin='0,0,0,10'/>
+
+                <CheckBox x:Name='ChkSyncCentral' Style='{StaticResource KzkCheck}'
+                          Content='Synchronize with Central before export' Margin='0,0,0,2'/>
+                <TextBlock x:Name='TxtSyncHint' Style='{StaticResource KzkHint}' Margin='26,0,0,12'
+                           Text='Only applies to workshared models on a central file. Runs before any links are reloaded or sheets exported.'/>
+
+                <CheckBox x:Name='ChkReloadLinks' Style='{StaticResource KzkCheck}'
+                          Content='Reload selected links before export' Margin='0,0,0,8'/>
+
+                <Border x:Name='PanelReloadLinks' Visibility='Collapsed'
+                        BorderBrush='#CCCCCC' BorderThickness='1' Background='#FAFAFA' Margin='26,0,0,0'>
+                  <StackPanel Margin='6'>
+                    <ScrollViewer VerticalScrollBarVisibility='Auto' MaxHeight='150'>
+                      <ItemsControl x:Name='IcLinks'>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <StackPanel Margin='0,2,0,4'>
+                              <CheckBox Style='{StaticResource KzkCheck}' IsChecked='{Binding IsChecked, Mode=TwoWay}'>
+                                <TextBlock Text='{Binding Name}' FontWeight='Bold' FontSize='11'/>
+                              </CheckBox>
+                              <TextBlock Text='{Binding PathDisplay}' FontSize='10' Foreground='#888888' Margin='26,0,0,0'/>
+                            </StackPanel>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </ScrollViewer>
+                    <StackPanel Orientation='Horizontal' Margin='0,6,0,0'>
+                      <Button x:Name='BtnCheckAllLinks'   Content='Check All'   Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+                      <Button x:Name='BtnUncheckAllLinks' Content='Uncheck All' Style='{StaticResource KzkBtnGhost}'/>
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <TextBlock x:Name='TxtFolderStructureLabel' Text='Folder Structure' FontWeight='Bold'
+                       Foreground='#16242E' Margin='0,12,0,6' Visibility='Collapsed'/>
+            <ComboBox x:Name='CboFolderMode' Style='{StaticResource KzkComboToggle}' Width='350'
+                      HorizontalAlignment='Left' Visibility='Collapsed'/>
+
+            <!-- ═══ OUTPUT FORMAT — checklist (tick any combination) ═══ -->
+            <TextBlock Text='Output Format' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,2'/>
+            <TextBlock Style='{StaticResource KzkHint}' Margin='0,0,0,6'
+                       Text='Tick every format to export. Each ticked format runs independently.'/>
+            <ItemsControl x:Name='IcFormats'>
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation='Horizontal'/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <CheckBox Style='{StaticResource KzkCheck}' Content='{Binding Name}'
+                            IsChecked='{Binding IsChecked, Mode=TwoWay}' Margin='0,0,18,4'/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel Orientation='Horizontal' Margin='0,4,0,0'>
+              <Button x:Name='BtnCheckAllFormats'   Content='Check All'   Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+              <Button x:Name='BtnUncheckAllFormats' Content='Uncheck All' Style='{StaticResource KzkBtnGhost}'/>
+            </StackPanel>
+
+            <TextBlock x:Name='TxtDwgVersionLabel' Text='DWG / DXF / DWFx Version' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,6'/>
+            <ComboBox x:Name='CboDwgVersion' Style='{StaticResource KzkComboToggle}' Width='140' HorizontalAlignment='Left'/>
+
+            <TextBlock x:Name='TxtDwfxLabel' Text='DWFx Settings' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,6'/>
+            <ComboBox x:Name='CboDwfxQuality' Style='{StaticResource KzkComboToggle}' Width='160' HorizontalAlignment='Left'/>
+
+            <TextBlock x:Name='TxtDwfLabel' Text='DWF Settings' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,6'/>
+            <ComboBox x:Name='CboDwfQuality' Style='{StaticResource KzkComboToggle}' Width='160' HorizontalAlignment='Left'/>
+
+            <TextBlock Text='PDF Settings' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,6'/>
+            <StackPanel Orientation='Horizontal'>
+              <ComboBox x:Name='CboPdfQuality'    Style='{StaticResource KzkComboToggle}' Width='200' Margin='0,0,10,0'/>
+              <ComboBox x:Name='CboPdfProcessing' Style='{StaticResource KzkComboToggle}' Width='140'/>
+            </StackPanel>
+
+            <TextBlock Text='PDF Compression' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,6'/>
+            <CheckBox x:Name='ChkCompressPdf' Style='{StaticResource KzkCheck}' Content='Compress PDF after export'/>
+            <TextBlock Style='{StaticResource KzkHint}' Margin='22,4,0,0'
+                       Text='Profile auto-selected: Low→default/low · Medium→default/medium · High→default/good · Very High→default/best'/>
+            <TextBlock Style='{StaticResource KzkHint}' Margin='22,0,0,0'
+                       Text='Whole-file Ghostscript compression (vector, fonts, images) — no user selection needed'/>
+
+            <TextBlock Text='Advanced PDF Settings' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,6'/>
+            <CheckBox x:Name='ChkHideCrop'     Style='{StaticResource KzkCheck}' Content='Hide crop boundaries'/>
+            <CheckBox x:Name='ChkHideRef'      Style='{StaticResource KzkCheck}' Content='Hide reference planes'/>
+            <CheckBox x:Name='ChkHideScope'    Style='{StaticResource KzkCheck}' Content='Hide scope boxes'/>
+            <CheckBox x:Name='ChkHideViewTags' Style='{StaticResource KzkCheck}' Content='Hide unreferenced view tags'/>
+
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+      <!-- STEP 4: VIEW EXPORT -->
+      <Border x:Name='Panel3' Style='{StaticResource KzkCard}' Visibility='Collapsed'>
+        <ScrollViewer VerticalScrollBarVisibility='Auto'>
+          <StackPanel>
+            <TextBlock Text='View Export' Style='{StaticResource KzkSectionGrey}'/>
+
+            <!-- Include Views toggle -->
+            <CheckBox x:Name='ChkIncludeViews' Style='{StaticResource KzkCheck}'
+                      Content='Include views in this export' Margin='0,8,0,0'/>
+
+            <!-- Sub-panel shown when ChkIncludeViews is checked -->
+            <StackPanel x:Name='SubPanelViewSource' Visibility='Collapsed' Margin='0,12,0,0'>
+
+              <!-- View list header -->
+              <TextBlock Text='Select Views' FontWeight='Bold' Foreground='#16242E' Margin='0,0,0,4'/>
+              <TextBlock Style='{StaticResource KzkHint}' Margin='0,0,0,6'
+                         Text='Tick views to export. Shift-click to range-select.'/>
+
+              <!-- Search bar -->
+              <Grid Margin='0,0,0,6'>
+                <TextBox x:Name='TxtViewSearch'
+                         Height='28' VerticalContentAlignment='Center' Padding='6,0'
+                         BorderBrush='#C0C0C0' BorderThickness='1' FontSize='11'/>
+                <TextBlock x:Name='TxtViewSearchGhost' Text='Search views…'
+                           Foreground='#AAAAAA' FontStyle='Italic' IsHitTestVisible='False'
+                           VerticalAlignment='Center' Margin='8,0,0,0' FontSize='11'/>
+              </Grid>
+
+              <!-- Check All / Uncheck All -->
+              <StackPanel Orientation='Horizontal' Margin='0,0,0,6'>
+                <Button x:Name='BtnCheckAllViews'   Content='Check All'   Style='{StaticResource KzkBtnGhost}' Margin='0,0,6,0'/>
+                <Button x:Name='BtnUncheckAllViews' Content='Uncheck All' Style='{StaticResource KzkBtnGhost}'/>
+              </StackPanel>
+
+              <!-- View list -->
+              <Border BorderBrush='#D0D0D0' BorderThickness='1' CornerRadius='3'>
+                <ScrollViewer VerticalScrollBarVisibility='Auto' MaxHeight='220'>
+                  <ItemsControl x:Name='IcViewList' VerticalAlignment='Top'>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <CheckBox Style='{StaticResource KzkCheck}'
+                                  IsChecked='{Binding IsChecked, Mode=TwoWay}'
+                                  IsEnabled='{Binding IsExportable}'
+                                  Margin='8,3,8,3'>
+                          <StackPanel Orientation='Horizontal'>
+                            <TextBlock Text='{Binding Name}' FontSize='11'/>
+                            <TextBlock Text='{Binding ViewTypeName}' FontSize='10'
+                                       Foreground='#888888' Margin='6,0,0,0'/>
+                          </StackPanel>
+                        </CheckBox>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Border>
+              <TextBlock x:Name='TxtViewCount' Style='{StaticResource KzkHint}' Margin='0,4,0,0'/>
+
+              <!-- View Output Formats -->
+              <TextBlock Text='View Output Formats' FontWeight='Bold' Foreground='#16242E' Margin='0,16,0,4'/>
+              <TextBlock Style='{StaticResource KzkHint}' Margin='0,0,0,6'
+                         Text='Formats and resolution apply to views only — independent of sheet export settings.'/>
+              <StackPanel Orientation='Horizontal'>
+                <CheckBox x:Name='ChkViewDwg'  Style='{StaticResource KzkCheck}' Content='DWG'  Margin='0,0,16,0'/>
+                <CheckBox x:Name='ChkViewPdf'  Style='{StaticResource KzkCheck}' Content='PDF'  Margin='0,0,16,0'/>
+                <CheckBox x:Name='ChkViewPng'  Style='{StaticResource KzkCheck}' Content='PNG'  Margin='0,0,16,0'/>
+                <CheckBox x:Name='ChkViewJpeg' Style='{StaticResource KzkCheck}' Content='JPEG' Margin='0,0,0,0'/>
+              </StackPanel>
+
+              <!-- DWG Version -->
+              <TextBlock Text='DWG Version' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,4'/>
+              <ComboBox x:Name='CboViewDwgVersion' Style='{StaticResource KzkComboToggle}'
+                        Width='140' HorizontalAlignment='Left'/>
+
+              <!-- Raster Resolution -->
+              <TextBlock Text='Raster Resolution (PNG / JPEG)' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,4'/>
+              <ComboBox x:Name='CboViewResolution' Style='{StaticResource KzkComboToggle}'
+                        Width='200' HorizontalAlignment='Left'/>
+
+              <!-- Pixel Size -->
+              <TextBlock Text='Pixel Size / Width (PNG / JPEG)' FontWeight='Bold' Foreground='#16242E' Margin='0,12,0,4'/>
+              <TextBlock Style='{StaticResource KzkHint}' Margin='0,0,0,4'
+                         Text='Sets the output image width in pixels. Use 4096 or 8192 for large plans.'/>
+              <ComboBox x:Name='CboViewPixelSize' Style='{StaticResource KzkComboToggle}'
+                        Width='120' HorizontalAlignment='Left'/>
+
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+    </Grid>
+
+    <!-- ═══ FOOTER ═══════════════════════════════════════════════════ -->
+    <Border Grid.Row='3' Background='#C0C0C0' BorderBrush='#A0A0A0'
+            BorderThickness='0,1,0,0' Padding='16,12'>
+      <Grid Height='36'>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width='*'/>
+          <ColumnDefinition Width='Auto'/>
+          <ColumnDefinition Width='*'/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Column='0' x:Name='TxtStatus' VerticalAlignment='Center'
+                   Foreground='#333333' FontSize='11' HorizontalAlignment='Left'/>
+
+        <TextBlock Grid.Column='1' FontSize='11' VerticalAlignment='Center'
+                   HorizontalAlignment='Center' Padding='0'>
+          <Hyperlink x:Name='LnkKidzink' NavigateUri='https://www.kidzink.com' Foreground='#555555'>
+            www.kidzink.com
+          </Hyperlink>
+        </TextBlock>
+
+        <StackPanel Grid.Column='2' Orientation='Horizontal' HorizontalAlignment='Right'
+                    VerticalAlignment='Center'>
+          <TextBlock Foreground='#555555' FontSize='11' Text='© Archie C. Manza 2026'
+                     Margin='0,0,24,0' Padding='0' VerticalAlignment='Center'/>
+          <Button x:Name='BtnBack' Content='&lt; Back' Style='{StaticResource KzkBtnGhost}' Margin='0,0,8,0'/>
+          <Button x:Name='BtnNext' Content='Next →'    Style='{StaticResource KzkBtn}'/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Popup x:Name='DragGhostPopup' AllowsTransparency='True' Placement='Absolute'
+           IsHitTestVisible='False' StaysOpen='True' IsOpen='False'>
+      <Border Background='#E43C2F' CornerRadius='4' Padding='8,4' Opacity='0.92'>
+        <TextBlock x:Name='DragGhostText' Foreground='#FFFFFF' FontWeight='Bold' FontSize='12'/>
+      </Border>
+    </Popup>
+  </Grid>
+</Window>
