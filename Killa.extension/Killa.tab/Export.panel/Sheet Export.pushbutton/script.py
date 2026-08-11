@@ -28,7 +28,13 @@ import datetime
 
 SCRIPT_DIR = __commandpath__
 if SCRIPT_DIR not in sys.path:
-    sys.path.append(SCRIPT_DIR)
+    sys.path.insert(0, SCRIPT_DIR)
+
+# ---------------------------------------------------------------------------
+# Trial licence gate — must run before any UI or export logic
+# ---------------------------------------------------------------------------
+import lic
+lic.check("SheetExport", limit=10)
 
 import clr
 clr.AddReference("RevitAPI")
