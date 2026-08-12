@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Kidzink Sheet Export
+Sheet Export
 =====================
-Kidzink Koda — Batch export sheets to PDF and/or DWG.
+Batch export sheets to PDF and/or DWG.
 
 Filename convention (ISO 19650):
   ProjectCode-Originator-Volume-Level-Type-Role-SheetNumber-CurrentRevision
@@ -34,7 +34,8 @@ if SCRIPT_DIR not in sys.path:
 # Trial licence gate — must run before any UI or export logic
 # ---------------------------------------------------------------------------
 import lic
-lic.check("SheetExport", limit=10)
+_TRIAL_LIMIT = 10
+_TRIAL_REMAINING = lic.check("SheetExport", limit=_TRIAL_LIMIT)
 
 import clr
 clr.AddReference("RevitAPI")
@@ -189,10 +190,10 @@ _LOGO_HTML = (
     '<div style="padding-left:24px;">'
     '<div style="font-size:18px;font-weight:700;color:#16242E;'
     'font-family:Arial,sans-serif;letter-spacing:0.3px;margin-bottom:3px;">'
-    'Kidzink - Köda'
+    'Sheet Export'
     '</div>'
     '<div style="font-size:12px;color:#888;font-family:Arial,sans-serif;">'
-    'Sheet Export - by Kidzink - Köda'
+    'Sheet Export Report'
     '</div>'
     '</div>'
     '</div>'
@@ -226,7 +227,7 @@ def _perf_dump():
     if not _OPEN_PERF or not _open_perf_marks:
         return
     try:
-        lines = ["Kidzink Sheet Export - open-path timing"]
+        lines = ["Sheet Export - open-path timing"]
         prev = _open_perf_t0
         for _label, _t in _open_perf_marks:
             lines.append("  {:<26} +{:5.2f}s   (t={:5.2f}s)".format(
@@ -704,7 +705,7 @@ def sync_with_central():
         sync_opts = SynchronizeWithCentralOptions()
         relinquish_opts = RelinquishOptions(True)
         sync_opts.SetRelinquishOptions(relinquish_opts)
-        sync_opts.Comment = "Kidzink Sheet Export - auto-sync before export"
+        sync_opts.Comment = "Sheet Export - auto-sync before export"
         doc.SynchronizeWithCentral(transact_opts, sync_opts)
         return True, None
     except Exception as ex:
@@ -1113,20 +1114,35 @@ def compress_pdf(pdf_path, profile="default/good"):
             creationflags=0x08000000   # CREATE_NO_WINDOW
         )
 
-        # IronPython 2.7: communicate() does not support the timeout kwarg.
-        # Poll manually with a hard deadline instead.
-        deadline = time.time() + 180.0   # 3-minute hard limit per file
-        while proc.poll() is None:
-            if time.time() > deadline:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                return "pdf24 compress timed out (>180s)", time.time() - t0
-            time.sleep(0.25)
+        # communicate() blocks until the process exits AND drains both pipes,
+        # preventing the OS-buffer deadlock that occurs when PIPE stdout/stderr
+        # fill up before proc.poll() returns.  This function is always called
+        # from a background thread (see _run_compress_async below), so blocking
+        # here does NOT freeze the Revit UI thread.
+        # Hard deadline enforced via a watchdog daemon thread.
+        _deadline = [time.time() + 180.0]   # 3-minute hard limit per file
+        _timed_out = [False]
+        def _watchdog():
+            import time as _t
+            while not _timed_out[0]:
+                if _t.time() > _deadline[0]:
+                    _timed_out[0] = True
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    return
+                _t.sleep(0.5)
+        import threading as _threading
+        _wd = _threading.Thread(target=_watchdog)
+        _wd.daemon = True
+        _wd.start()
 
-        # Process has exited — read output
         stdout_data, stderr_data = proc.communicate()
+        _timed_out[0] = True   # signal watchdog to stop
+
+        if _timed_out[0] and proc.returncode is None:
+            return "pdf24 compress timed out (>180s)", time.time() - t0
 
         if proc.returncode != 0:
             err = ""
@@ -1186,19 +1202,33 @@ def compress_pdf_batch(pdf_paths, profile="default/good"):
             creationflags=0x08000000   # CREATE_NO_WINDOW
         )
 
-        # IronPython 2.7: communicate() has no timeout kwarg.
-        # Poll manually with a hard deadline — generous for a full batch.
-        deadline = time.time() + 600.0   # 10 min for entire batch
-        while proc.poll() is None:
-            if time.time() > deadline:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                return "batch compress timed out (>600s)", time.time() - t0
-            time.sleep(0.5)
+        # communicate() blocks until process exits AND drains both PIPE buffers.
+        # Called from background thread only — does not block the Revit UI.
+        # Watchdog daemon thread enforces hard deadline without time.sleep on
+        # the calling thread.
+        _deadline = [time.time() + 600.0]   # 10-minute hard limit for whole batch
+        _timed_out = [False]
+        def _watchdog():
+            import time as _t
+            while not _timed_out[0]:
+                if _t.time() > _deadline[0]:
+                    _timed_out[0] = True
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    return
+                _t.sleep(1.0)
+        import threading as _threading
+        _wd = _threading.Thread(target=_watchdog)
+        _wd.daemon = True
+        _wd.start()
 
         proc.communicate()
+        _timed_out[0] = True   # signal watchdog to stop
+
+        if _timed_out[0] and proc.returncode is None:
+            return "batch compress timed out (>600s)", time.time() - t0
 
         if proc.returncode != 0:
             return "batch compress error ({})".format(proc.returncode), time.time() - t0
@@ -1531,7 +1561,7 @@ def export_dwfx(sheet, export_name, output_folder, dwfx_opts):
     # called inside an open transaction — unlike PDF/DWG/DXF export, which run
     # fine with no transaction open. Nothing is actually changed, so the
     # transaction is always rolled back regardless of outcome.
-    tx = Transaction(doc, "Kidzink - DWFx Export (no-op)")
+    tx = Transaction(doc, "DWFx Export (no-op)")
     try:
         tx.Start()
         result = dwfx_export(tmp_dir, "_tmp", view_set, dwfx_opts)
@@ -1585,7 +1615,7 @@ def export_dwf(sheet, export_name, output_folder, dwf_opts):
     view_set.Insert(sheet)
 
     tmp_dir = _short_tmpdir("es_dwf_")
-    tx = Transaction(doc, "Kidzink - DWF Export (no-op)")
+    tx = Transaction(doc, "DWF Export (no-op)")
     try:
         tx.Start()
         result = dwf_export(tmp_dir, "_tmp", view_set, dwf_opts)
@@ -1689,7 +1719,7 @@ def export_dwfx_combined(sheets, export_name, output_folder, dwfx_opts):
         view_set.Insert(s)
 
     tmp_dir = _short_tmpdir("es_dwfxcombo_")
-    tx = Transaction(doc, "Kidzink - DWFx Merge Export (no-op)")
+    tx = Transaction(doc, "DWFx Merge Export (no-op)")
     try:
         tx.Start()
         result = dwfx_export(tmp_dir, "_tmp", view_set, dwfx_opts)
@@ -1738,7 +1768,7 @@ def export_dwf_combined(sheets, export_name, output_folder, dwf_opts):
         view_set.Insert(s)
 
     tmp_dir = _short_tmpdir("es_dwfcombo_")
-    tx = Transaction(doc, "Kidzink - DWF Merge Export (no-op)")
+    tx = Transaction(doc, "DWF Merge Export (no-op)")
     try:
         tx.Start()
         result = dwf_export(tmp_dir, "_tmp", view_set, dwf_opts)
@@ -1907,7 +1937,7 @@ def export_dwfx_batch(sheets, dwfx_quality):
         view_set.Insert(s)
 
     tmp_dir = _short_tmpdir("es_dwfxbatch_")
-    tx = Transaction(doc, "Kidzink - DWFx Batch Export (no-op)")
+    tx = Transaction(doc, "DWFx Batch Export (no-op)")
     try:
         tx.Start()
         result = dwfx_export(tmp_dir, "_tmp", view_set, batch_opts)
@@ -1949,7 +1979,7 @@ def export_dwf_batch(sheets, dwf_quality):
         view_set.Insert(s)
 
     tmp_dir = _short_tmpdir("es_dwfbatch_")
-    tx = Transaction(doc, "Kidzink - DWF Batch Export (no-op)")
+    tx = Transaction(doc, "DWF Batch Export (no-op)")
     try:
         tx.Start()
         result = dwf_export(tmp_dir, "_tmp", view_set, batch_opts)
@@ -3069,16 +3099,20 @@ def _run_export(output_folder):
     for _bd in (_pdf_batch, _dwg_batch, _dxf_batch, _dwfx_batch, _dwf_batch):
         _queue_cleanup(_bd.get("tmp_dir"))
 
-    # ── Batch PDF compression: one pdf24-DocTool.exe call for ALL PDFs ────
-    # Replaces per-sheet compression (N subprocess launches → 1). Each launch
-    # carries ~2-5s of fixed Ghostscript init overhead, so this saves
-    # (N-1) x that. Falls back to per-file on any error.
-    if _pdf_paths_to_compress:
+    # ── Batch PDF compression: run in a background thread so the Revit UI
+    # thread is never blocked by Ghostscript / pdf24-DocTool.exe execution.
+    # We join() the thread BEFORE building the HTML report so file sizes in
+    # the report reflect the post-compression state.
+    # Falls back to per-file compression if the batch call fails, matching
+    # prior behaviour without blocking the UI in either case.
+    _compress_failed_entries = []   # populated by the worker; read after join
+
+    def _run_compress_async():
+        if not _pdf_paths_to_compress:
+            return
         _bc_result, _bc_elapsed = compress_pdf_batch(
             _pdf_paths_to_compress, compress_profile)
         if _bc_result is not True:
-            # Batch failed — fall back to per-file compression so no PDF
-            # is left uncompressed. This is slower but matches old behaviour.
             _per_file_fails = 0
             for _ppath in _pdf_paths_to_compress:
                 if os.path.isfile(_ppath):
@@ -3086,13 +3120,26 @@ def _run_export(output_folder):
                     if _pf_result is not True:
                         _per_file_fails += 1
             if _per_file_fails > 0:
-                failed.append({
+                _compress_failed_entries.append({
                     "sheet": "BATCH",
                     "format": "PDF Compress",
                     "error": "batch failed ({}), {} of {} per-file fallbacks also failed".format(
                         _bc_result, _per_file_fails, len(_pdf_paths_to_compress)),
                     "elapsed": _bc_elapsed,
                 })
+
+    import threading as _threading_compress
+    _compress_thread = _threading_compress.Thread(target=_run_compress_async)
+    _compress_thread.daemon = True
+    _compress_thread.start()
+
+    # Join with a generous timeout so we never wait forever if pdf24 hangs.
+    # The watchdog inside compress_pdf_batch kills the subprocess at 600s, so
+    # 660s here gives it 60s of cleanup headroom before we give up and move on.
+    _compress_thread.join(timeout=660)
+
+    # Merge any compression failures into the main failed list
+    failed.extend(_compress_failed_entries)
 
     session_elapsed = time.time() - session_t0
 
@@ -3143,7 +3190,7 @@ def _run_export(output_folder):
                       _DWG_VERSION_MAP.get(view_dwg_version, _fallback_ver))
 
         with forms.ProgressBar(
-                title="Kidzink - Exporting views {value} of {max_value}") as vpb:
+                title="Exporting views {value} of {max_value}") as vpb:
             for vcount, _vw in enumerate(_selected_views, 1):
                 vpb.update_progress(vcount, view_total)
                 _vname = sanitise(_vw.Name) or "View_%s" % _eid_int(_vw.Id)
@@ -3315,7 +3362,7 @@ def _run_export(output_folder):
 
         _html = (
             "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
-            "<title>Kidzink Sheet Export Report</title>"
+            "<title>Sheet Export Report</title>"
             "<style>"
             "body{font-family:Arial,sans-serif;margin:32px;color:#16242E;background:#fff;}"
             "h1{color:#E43C2F;font-size:20px;border-bottom:3px solid #E43C2F;padding-bottom:8px;}"
@@ -3326,7 +3373,7 @@ def _run_export(output_folder):
             ".meta{font-size:12px;color:#888;margin-bottom:20px;}"
             ".footer{font-size:11px;color:#999;margin-top:32px;border-top:1px solid #eee;padding-top:8px;}"
             "</style></head><body>"
-            "<h1>Kidzink - K\u00f6da &mdash; Sheet Export Report</h1>"
+            "<h1>Sheet Export Report</h1>"
             "<div class=\"meta\">"
             "<b>Source:</b> " + _esc(selected_name) + " &nbsp;|"
             " <b>Format:</b> " + _esc(export_format_label) + " &nbsp;|"
@@ -3347,15 +3394,63 @@ def _run_export(output_folder):
         try:
             with open(_report_path, "wb") as _rf:
                 _rf.write(_html.encode("utf-8"))
+            # Auto-open the report in the default browser so the user gets
+            # immediate feedback that the export finished and can review results.
+            os.startfile(_report_path)
         except Exception:
             pass
 
-    # Flush all deferred temp-directory removals in one pass at session end,
-    # off the per-sheet critical path.
-    _flush_cleanup()
 
     # Stop auto-dismissing Revit dialogs now that the export is done.
     _unsubscribe_auto_dismiss()
+
+    # Notify the user that the export is complete. This fires whether or not
+    # the HTML report was generated, so there is always clear end-of-run
+    # feedback rather than the UI going silent after a walk-away export.
+    try:
+        _bring_revit_forward()
+        _done_dlg = TaskDialog("Export Complete")
+        if _TRIAL_REMAINING is None:
+            _trial_label = "Trial: Licensed"
+        else:
+            _trial_label = "Trial: {r} of {t} remaining".format(
+                r=_TRIAL_REMAINING, t=_TRIAL_LIMIT)
+        _done_dlg.MainInstruction = "{trial}   |   Export finished".format(
+            trial=_trial_label)
+        _n_exported = (
+            (1 if (do_pdf_combined and exported_pdf_combined) else 0)
+            + (1 if (do_dwfx_combined and exported_dwfx_combined) else 0)
+            + (1 if (do_dwf_combined and exported_dwf_combined) else 0)
+            + (len(exported_pdf)  if do_pdf  else 0)
+            + (len(exported_dwg)  if do_dwg  else 0)
+            + (len(exported_dxf)  if do_dxf  else 0)
+            + (len(exported_dwfx) if do_dwfx else 0)
+            + (len(exported_dwf)  if do_dwf  else 0)
+        )
+        _fail_count = len(failed) + len(failed_views)
+        _content_parts = [
+            "{n} file(s) exported to:".format(n=_n_exported),
+            output_folder,
+        ]
+        if _fail_count:
+            _content_parts.append(
+                "\n{f} sheet(s) failed — see the HTML report for details.".format(
+                    f=_fail_count)
+            )
+        _done_dlg.MainContent = "\n".join(_content_parts)
+        _done_dlg.CommonButtons = TaskDialogCommonButtons.Close
+        _done_dlg.Show()
+    except Exception:
+        pass
+
+    # Flush deferred temp-directory removals in a background thread so
+    # shutil.rmtree (which can block for seconds on OneDrive/network paths
+    # while Defender scans) never freezes the UI after the dialog closes.
+    try:
+        import threading
+        threading.Thread(target=_flush_cleanup).start()
+    except Exception:
+        _flush_cleanup()  # fallback: synchronous is better than skipped
 
 
 # ---------------------------------------------------------------------------

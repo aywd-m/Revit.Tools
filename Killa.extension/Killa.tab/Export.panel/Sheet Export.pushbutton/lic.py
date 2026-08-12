@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-_kzk_lic.py  —  Kidzink Trial License Gate
+lic.py  —  Trial License Gate
 ============================================
-Per-tool run counter stored in %APPDATA%\\Kidzink\\
-Counter file: .kzk_<TOOL_ID>
-Key file:     .kzk_<TOOL_ID>_key   (optional — bypasses limit permanently)
+Per-tool run counter stored in %APPDATA%\\ACM\\
+Counter file: _<TOOL_ID>
+Key file:     _<TOOL_ID>_key   (optional — bypasses limit permanently)
 
 IronPython 2.7 compatible. No f-strings, no hasattr on .NET types.
 
@@ -12,12 +12,14 @@ Usage in script.py:
     SCRIPT_DIR = __commandpath__
     if SCRIPT_DIR not in sys.path:
         sys.path.insert(0, SCRIPT_DIR)
-    import _kzk_lic
-    _kzk_lic.check("SheetExport", limit=10)
+    import lic
+    remaining = lic.check("SheetExport", limit=10)
     # ^ exits script immediately if trial expired; otherwise increments count
+    #   and returns the number of runs remaining after this one (or None
+    #   when a valid full-licence key is present).
 
 Admin helpers (run from any standard Python — not required in Revit):
-    import _kzk_lic
+    import lic
     _kzk_lic.status("SheetExport")       # print current count
     _kzk_lic.reset("SheetExport")        # reset to 0  (delete counter file)
     _kzk_lic.set_count("SheetExport", 7) # force a specific count
@@ -35,11 +37,11 @@ import hashlib
 _XOR_KEY   = 0x4B          # single-byte XOR mask — not cryptographic,
                             # just makes the file unreadable as plain text
 _APPDATA   = os.environ.get("APPDATA", os.path.expanduser("~"))
-_STORE_DIR = os.path.join(_APPDATA, "Kidzink")
+_STORE_DIR = os.path.join(_APPDATA, "ACM")
 
 # Salt mixed into the key hash — change this string before shipping to make
 # keys non-transferable between your different clients.
-_KEY_SALT  = "KidzinkKoda2026"
+_KEY_SALT  = "ACM2026"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -54,11 +56,11 @@ def _ensure_dir():
 
 
 def _counter_path(tool_id):
-    return os.path.join(_STORE_DIR, ".kzk_" + tool_id)
+    return os.path.join(_STORE_DIR, "_" + tool_id)
 
 
 def _key_path(tool_id):
-    return os.path.join(_STORE_DIR, ".kzk_" + tool_id + "_key")
+    return os.path.join(_STORE_DIR, "_" + tool_id + "_key")
 
 
 def _xor(data):
@@ -119,13 +121,12 @@ def _show_expired_dialog(tool_id, limit):
         except Exception:
             pass
 
-        dlg = TaskDialog("Kidzink - Trial Expired")
-        dlg.MainInstruction = "Trial limit reached"
+        dlg = TaskDialog("Trial - Expired")
+        dlg.MainInstruction = "Trial: 0 remaining"
         dlg.MainContent = (
-            "You have used Kidzink {tool} {limit} times.\n\n"
-            "Your trial has expired. Please contact Kidzink Koda to\n"
-            "obtain a full licence.\n\n"
-            "www.kidzink.com"
+            "You have used {tool} {limit} times.\n\n"
+            "Your trial has expired. Please contact your administrator to\n"
+            "obtain a full licence."
         ).format(tool=tool_id, limit=limit)
         dlg.CommonButtons = TaskDialogCommonButtons.Close
         dlg.Show()
@@ -135,18 +136,25 @@ def _show_expired_dialog(tool_id, limit):
             from pyrevit import forms
             forms.alert(
                 "Trial limit of {limit} uses reached for {tool}.\n"
-                "Contact www.kidzink.com for a full licence.".format(
+                "Contact your administrator for a full licence.".format(
                     tool=tool_id, limit=limit),
-                title="Kidzink - Trial Expired")
+                title="Trial - Expired")
         except Exception:
             pass
 
-    # Exit the calling script unconditionally
+    # Exit the calling script unconditionally.
+    # IMPORTANT: pyrevit script.exit() raises SystemExit internally.
+    # We must NOT catch SystemExit with a bare `except Exception` (Exception
+    # does not catch BaseException/SystemExit in CPython, but IronPython 2.7's
+    # CLR bridge CAN intercept it depending on context).  We therefore import
+    # and call script.exit() OUTSIDE any try/except, and only fall back to
+    # sys.exit(0) if the import itself fails.
     try:
         from pyrevit import script as _script
-        _script.exit()
     except Exception:
         sys.exit(0)
+    _script.exit()          # raises SystemExit — must NOT be inside except-guarded block
+    sys.exit(0)             # belt-and-braces: never reached unless _script.exit() returns
 
 
 # ---------------------------------------------------------------------------
@@ -157,26 +165,28 @@ def check(tool_id, limit=10):
     """
     Main gate — call this at the top of script.py.
 
-    1. If a valid key file exists  → do nothing (full licence).
+    1. If a valid key file exists  → do nothing (full licence), return None.
     2. If count >= limit           → show expiry dialog and exit.
-    3. Otherwise                   → increment count and return.
+    3. Otherwise                   → increment count and return the number
+                                      of runs remaining after this one.
 
     tool_id : short identifier, e.g. "SheetExport".  Must be filesystem-safe.
     limit   : number of allowed runs (default 10).
     """
     # Full-licence bypass
     if _has_valid_key(tool_id):
-        return
+        return None
 
     count = _read_count(tool_id)
 
     if count >= limit:
         _show_expired_dialog(tool_id, limit)
-        return  # _show_expired_dialog calls sys.exit / script.exit — belt & braces
+        return 0  # _show_expired_dialog calls sys.exit / script.exit — belt & braces
 
     # Increment and persist before running — counts the attempt, not the success,
     # so the user can't game it by force-closing Revit mid-export.
     _write_count(tool_id, count + 1)
+    return limit - (count + 1)
 
 
 # ---------------------------------------------------------------------------
