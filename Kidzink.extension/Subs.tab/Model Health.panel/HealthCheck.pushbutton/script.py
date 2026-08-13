@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 # suppress the blank pyRevit output pane — MUST be first executable line
-# temporarily DISABLED to capture error traceback — re-enable after diagnosis
-# try:
-#     __window__.hide()
-# except Exception:
-#     pass
+try:
+    __window__.hide()
+except Exception:
+    pass
 
 """
-Kidzink — Revit Health Check
-Exports a branded HTML report of all model warnings,
+Kidzink — Revit Health Check (Multi-Discipline)
+WPF discipline selector + branded HTML report of all model warnings,
 grouped by type, with clipboard-copy IDs and a model health gauge.
 Includes linked models (pinned status) and large families (>=1 MB).
+Supports: Architectural, MEP, Structural, Landscape / Infra.
 IronPython 2.7 / Revit 2025-2026
 """
 
@@ -19,7 +19,6 @@ import sys
 import base64
 import tempfile
 import datetime
-import subprocess
 import math
 import time
 import re
@@ -39,115 +38,222 @@ from Autodesk.Revit.DB import (
 # ---------------------------------------------------------------------------
 LOGO_PATH = os.path.join(os.environ.get("APPDATA", ""), "Kidzink", "kzk_logo.png")
 MIN_FAMILY_SIZE = 1048576          # 1 MB
-VIEW_3D_NAME = "_3DView_ModelHealthCheck"
+
+# ---------------------------------------------------------------------------
+# DISCIPLINE SELECTOR — WPF XAML dialog
+# ---------------------------------------------------------------------------
+# Discipline map: key = display label, value = (module_name, view_suffix, label_suffix)
+_DISCIPLINES = {
+    "Architectural":       ("warnings_arc",          "",               ""),
+    "Mechanical":          ("warnings_mechanical",   "_Mechanical",    " (Mechanical)"),
+    "Plumbing":            ("warnings_plumbing",     "_Plumbing",      " (Plumbing)"),
+    "Electrical":          ("warnings_electrical",   "_Electrical",    " (Electrical)"),
+    "Fire Fighting":       ("warnings_firefighting", "_FireFighting",  " (Fire Fighting)"),
+    "Structural":          ("warnings_str",          "_Structural",    " (Structural)"),
+    "Landscape / Infra":   ("warnings_lan",          "_Landscape",     " (Landscape / Infra)"),
+}
+
+# Add pushbutton/lib/ to sys.path so warnings_*.py modules can be imported.
+# pyRevit only auto-adds the extension-level lib/, not pushbutton-level.
+_SCRIPT_DIR = os.path.dirname(__file__)
+_LIB_DIR = os.path.join(_SCRIPT_DIR, "lib")
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
+def _show_discipline_picker():
+    """
+    Show a branded WPF XAML dialog for discipline selection.
+    Returns the selected discipline key (e.g. "Architectural") or None if cancelled.
+    """
+    import clr
+    clr.AddReference("PresentationFramework")
+    clr.AddReference("PresentationCore")
+    clr.AddReference("WindowsBase")
+    from System.Windows import Window, SizeToContent, WindowStartupLocation
+    from System.Windows.Markup import XamlReader
+
+    xaml = (
+        '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"'
+        '        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'
+        '        Title="Kidzink - Health Check"'
+        '        SizeToContent="WidthAndHeight"'
+        '        WindowStartupLocation="CenterScreen"'
+        '        ResizeMode="NoResize"'
+        '        Background="#C0C0C0">'
+        '  <StackPanel Margin="0">'
+        ''
+        '    <!-- Header -->'
+        '    <Border Background="#E43C2F" Padding="16,14,16,14">'
+        '      <TextBlock Text="Kidzink - Health Check"'
+        '                 Foreground="White" FontSize="16" FontWeight="Bold"'
+        '                 FontFamily="Manrope, Segoe UI" />'
+        '    </Border>'
+        ''
+        '    <!-- Body -->'
+        '    <StackPanel Margin="20,16,20,8">'
+        '      <TextBlock Text="Select Discipline" FontSize="13" FontWeight="Bold"'
+        '                 Foreground="#000000" FontFamily="Manrope, Segoe UI" Margin="0,0,0,8" />'
+        ''
+        '      <RadioButton x:Name="rb_arc" Content="  Architectural"'
+        '                   IsChecked="True" FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        '      <RadioButton x:Name="rb_mec" Content="  Mechanical"'
+        '                   FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        '      <RadioButton x:Name="rb_plb" Content="  Plumbing"'
+        '                   FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        '      <RadioButton x:Name="rb_elc" Content="  Electrical"'
+        '                   FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        '      <RadioButton x:Name="rb_ffp" Content="  Fire Fighting"'
+        '                   FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        '      <RadioButton x:Name="rb_str" Content="  Structural"'
+        '                   FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        '      <RadioButton x:Name="rb_lan" Content="  Landscape / Infra"'
+        '                   FontSize="13" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#000000" Margin="4,4,4,4" />'
+        ''
+        '      <TextBlock Text="The report will check warnings specific to the selected discipline."'
+        '                 FontSize="12" Foreground="#808080" FontFamily="Manrope, Segoe UI"'
+        '                 Margin="4,8,4,4" TextWrapping="Wrap" />'
+        '    </StackPanel>'
+        ''
+        '    <!-- Run button -->'
+        '    <StackPanel Margin="20,8,20,12">'
+        '      <Button x:Name="btn_run" Content="Run Health Check"'
+        '              FontSize="13" FontWeight="SemiBold" FontFamily="Manrope, Segoe UI"'
+        '              Foreground="White" Background="#E43C2F"'
+        '              Padding="14,8" Cursor="Hand"'
+        '              BorderThickness="0" />'
+        '    </StackPanel>'
+        ''
+        '    <!-- Footer -->'
+        '    <Border BorderThickness="0,1,0,0" BorderBrush="#C0C0C0" Padding="16,8,16,8">'
+        '      <Grid>'
+        '        <TextBlock Text="www.kidzink.com" FontSize="12" FontFamily="Manrope, Segoe UI"'
+        '                   Foreground="#E43C2F" HorizontalAlignment="Center"'
+        '                   Cursor="Hand" />'
+        '        <TextBlock Text="© Archie C. Manza 2026" FontSize="12"'
+        '                   FontFamily="Manrope, Segoe UI" Foreground="#000000"'
+        '                   HorizontalAlignment="Right" />'
+        '      </Grid>'
+        '    </Border>'
+        ''
+        '  </StackPanel>'
+        '</Window>'
+    )
+
+    window = XamlReader.Parse(xaml)
+
+    # Wire up Revit as owner window for correct z-order
+    try:
+        from System.Windows.Interop import WindowInteropHelper
+        helper = WindowInteropHelper(window)
+        helper.Owner = __revit__.MainWindowHandle
+    except Exception:
+        pass
+
+    result = [None]
+
+    rb_map = {
+        "rb_arc": "Architectural",
+        "rb_mec": "Mechanical",
+        "rb_plb": "Plumbing",
+        "rb_elc": "Electrical",
+        "rb_ffp": "Fire Fighting",
+        "rb_str": "Structural",
+        "rb_lan": "Landscape / Infra",
+    }
+
+    def on_run(sender, args):
+        for rb_name, disc_key in rb_map.items():
+            rb = window.FindName(rb_name)
+            if rb and rb.IsChecked:
+                result[0] = disc_key
+                break
+        window.Close()
+
+    btn = window.FindName("btn_run")
+    btn.Click += on_run
+
+    # Make www.kidzink.com clickable
+    try:
+        import System.Diagnostics
+        footer_link = None
+        # Find the centered TextBlock with the URL text
+        footer_border = window.Content.Children[3]  # Footer Border
+        footer_grid = footer_border.Child
+        for child in footer_grid.Children:
+            try:
+                if child.Text == "www.kidzink.com":
+                    footer_link = child
+                    break
+            except Exception:
+                pass
+        if footer_link:
+            def on_link_click(s, e):
+                try:
+                    System.Diagnostics.Process.Start("https://www.kidzink.com")
+                except Exception:
+                    pass
+            footer_link.MouseLeftButtonDown += on_link_click
+    except Exception:
+        pass
+
+    window.ShowDialog()
+    return result[0]
+
+
+# ---------------------------------------------------------------------------
+# Run the discipline picker BEFORE anything else
+# ---------------------------------------------------------------------------
+_selected_discipline = _show_discipline_picker()
+if _selected_discipline is None:
+    from pyrevit import script
+    script.exit()
+
+_disc_module, _disc_view_suffix, _disc_label = _DISCIPLINES[_selected_discipline]
+
+# Dynamic import of the selected warnings library
+_warnings_mod = __import__(_disc_module)
+WARNING_EXPLANATIONS = _warnings_mod.WARNING_EXPLANATIONS
+KNOWN_WARNINGS = _warnings_mod.KNOWN_WARNINGS
+
+# Set the 3D view name based on discipline
+VIEW_3D_NAME = "_3DView_ModelHealthCheck" + _disc_view_suffix
+
 # Health scoring — pass/fail per check
 # Score = (Passed Checks / Total Evaluated Checks) × 100
 # Each known warning type is one check. 0 issues = pass, >0 = fail.
 # Ungrouped warning types also count as failed checks.
 
-# Explanation text shown in grey below each warning type
-WARNING_EXPLANATIONS = {
-    'Elements have duplicate "Number" values':
-        'Two or more sheets or rooms share the same number. Renumber duplicates so each element has a unique identifier.',
-    'Elements have duplicate "Type Mark" values':
-        'Multiple family types share the same Type Mark. Assign unique Type Marks or clear unused ones.',
-    'Elements have duplicate "Mark" values':
-        'Instance Mark values are duplicated within the same category. Clear or reassign marks to remove ambiguity.',
-    'There are identical instances in the same place':
-        'Two identical elements are stacked on top of each other. Delete the duplicate to reduce model size and avoid double-counting.',
-    'Room Tag is outside of its Room':
-        'A room tag has been moved or the room boundary changed so the tag no longer sits inside its room.',
-    'One element is completely inside another':
-        'A wall, floor, or other element is fully enclosed by another of the same type, causing geometry overlap.',
-    'Highlighted floors overlap':
-        'Floor slabs intersect or overlap each other, which can cause area/volume miscalculations.',
-    'Room is not in a properly enclosed region':
-        'Room-bounding walls or separation lines do not form a closed loop. Close the gap so the room can calculate area.',
-    'Multiple Rooms are in the same enclosed region':
-        'More than one room element exists inside a single enclosed boundary. Delete the extra room or add a separation line.',
-    'Area is not in a properly enclosed region':
-        'Area boundary lines do not form a closed loop. Close the gap in the area plan.',
-    'Room separation line is slightly off axis and may cause inaccuracies':
-        'A room separation line is rotated by a fraction of a degree from the nearest axis. Straighten it to fix area calculations.',
-    'Wall is slightly off axis and may cause inaccuracies':
-        'A wall is not aligned to the project grid or nearest 45° angle. Snap it to axis to avoid join and area errors.',
-    'Line is slightly off axis':
-        'A model or detail line is fractionally off a clean angle. Straighten to avoid downstream geometry issues.',
-    'Highlighted walls overlap':
-        'Two walls occupy the same space, causing doubled geometry and incorrect room boundaries.',
-    'Highlighted roofs overlap':
-        'Roof elements intersect, leading to geometry conflicts and potential rendering issues.',
-    'Highlighted ceilings overlap':
-        'Ceiling elements overlap, which can cause doubled area values and visual artefacts.',
-    'Area boundary line is slightly off axis':
-        'An area boundary line is fractionally off axis. Straighten it to prevent area calculation gaps.',
-    'Multiple Areas are in the same enclosed region':
-        'More than one area element shares a single enclosed boundary. Delete the duplicate or add a boundary line.',
-    'Area Tag is outside of its Area':
-        'An area tag has been moved outside its area boundary. Drag it back inside or reassociate it.',
-    'Space is not in a properly enclosed region':
-        'MEP space boundaries are not closed. Close the gap so the space can calculate volume and airflow.',
-    'Space Tag is outside of its Space':
-        'A space tag sits outside its associated space boundary.',
-    'Dimension references deleted elements':
-        'A dimension string references geometry that has been removed. Delete or re-host the dimension.',
-    'Constraint is not satisfied':
-        'A locked dimension or alignment constraint cannot be maintained. Unlock or adjust the constraint.',
-    'Tag has no host':
-        'An annotation tag references an element that has been deleted. Remove the orphaned tag.',
-    'View is not on a Sheet':
-        'A view exists in the project but has not been placed on any sheet. Place it or delete if unused.',
-    'The same view appears on more than one sheet':
-        'A view is placed on multiple sheets simultaneously. Remove the duplicate placement.',
-    'Linked file is missing':
-        'A Revit link file cannot be found at its saved path. Relink the file or remove the broken reference.',
-    'Element references a deleted element':
-        'An element still points to another element that no longer exists. Purge the broken reference.',
-}
-
-KNOWN_WARNINGS = [
-    'Elements have duplicate "Number" values',
-    'Elements have duplicate "Type Mark" values',
-    'Elements have duplicate "Mark" values',
-    'There are identical instances in the same place',
-    'Room Tag is outside of its Room',
-    'One element is completely inside another',
-    'Highlighted floors overlap',
-    'Room is not in a properly enclosed region',
-    'Multiple Rooms are in the same enclosed region',
-    'Area is not in a properly enclosed region',
-    'Room separation line is slightly off axis and may cause inaccuracies',
-    'Wall is slightly off axis and may cause inaccuracies',
-    'Line is slightly off axis',
-    'Highlighted walls overlap',
-    'Highlighted roofs overlap',
-    'Highlighted ceilings overlap',
-    'Area boundary line is slightly off axis',
-    'Multiple Areas are in the same enclosed region',
-    'Area Tag is outside of its Area',
-    'Space is not in a properly enclosed region',
-    'Space Tag is outside of its Space',
-    'Dimension references deleted elements',
-    'Constraint is not satisfied',
-    'Tag has no host',
-    'View is not on a Sheet',
-    'The same view appears on more than one sheet',
-    'Linked file is missing',
-    'Element references a deleted element',
-]
-
-# Pre‑lowercase known warnings for faster matching
+# Pre-lowercase known warnings for faster matching
 KNOWN_WARNINGS_LOW = {w.lower(): w for w in KNOWN_WARNINGS}
 
 # ---------------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------------
+def _html_esc(text):
+    """Escape text for safe insertion into HTML."""
+    if not text:
+        return u""
+    return (text
+            .replace(u"&", u"&amp;")
+            .replace(u"<", u"&lt;")
+            .replace(u">", u"&gt;")
+            .replace(u'"', u"&quot;")
+            .replace(u"'", u"&#39;"))
+
+
 def _bring_revit_forward():
     try:
-        from Autodesk.Windows import ComponentManager
-        hWnd = ComponentManager.ApplicationWindow.Handle
         import ctypes
-        ctypes.windll.user32.SetForegroundWindow(hWnd)
+        hwnd = __revit__.MainWindowHandle.ToInt64()
+        ctypes.windll.user32.AllowSetForegroundWindow(hwnd)
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
     except Exception:
         pass
 
@@ -188,10 +294,10 @@ def _get_element_level_name(doc, elem):
     except Exception:
         pass
     try:
-        lvl = getattr(elem, 'Level', None)
+        lvl = elem.Level
         if lvl and lvl.Name:
             return lvl.Name
-    except Exception:
+    except (AttributeError, Exception):
         pass
     try:
         p = elem.get_Parameter(BuiltInParameter.FAMILY_LEVEL_PARAM)
@@ -202,12 +308,15 @@ def _get_element_level_name(doc, elem):
     except Exception:
         pass
     try:
-        host = getattr(elem, 'Host', None)
+        host = elem.Host
         if host:
-            lvl = getattr(host, 'Level', None)
-            if lvl and lvl.Name:
-                return lvl.Name
-    except Exception:
+            try:
+                lvl = host.Level
+                if lvl and lvl.Name:
+                    return lvl.Name
+            except (AttributeError, Exception):
+                pass
+    except (AttributeError, Exception):
         pass
     return None
 
@@ -242,27 +351,14 @@ def _score(grouped, ungrouped):
         score = int(round(passed * 100.0 / total_checks))
     # Grade label + colour from score
     if score >= 90:
-        return score, "Excellent", "#3B6D11", passed, total_checks
+        return score, "Excellent", "#32CD32", passed, total_checks
     if score >= 75:
         return score, "Good", "#639922", passed, total_checks
     if score >= 50:
-        return score, "Fair — needs attention", "#BA7517", passed, total_checks
+        return score, "Fair — needs attention", "#FFBF00", passed, total_checks
     if score >= 25:
         return score, "Poor — action required", "#E43C2F", passed, total_checks
     return score, "Critical — urgent action required", "#A00000", passed, total_checks
-
-
-def _needle_coords(score):
-    """
-    Gauge arc: 180deg (left, score=0) to 0deg (right, score=100).
-    Centre = (150, 140), radius = 95.
-    """
-    angle_deg = 180.0 - (score / 100.0 * 180.0)
-    angle_rad = math.radians(angle_deg)
-    cx, cy, r = 150, 140, 95
-    x2 = cx + r * math.cos(angle_rad)
-    y2 = cy - r * math.sin(angle_rad)
-    return round(x2, 1), round(y2, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -287,16 +383,34 @@ def collect_warnings(doc):
         ids = list(w.GetFailingElements())
 
         matched = False
+        # Match strategy: the warning description must contain the known
+        # warning text OR the known text must contain the description.
+        # To avoid false positives from short known strings, require at
+        # least 20 characters of overlap (or an exact match).
+        best_match = None
+        best_len = 0
         for known_low, known_name in KNOWN_WARNINGS_LOW.items():
-            if known_low in desc_low or desc_low in known_low:
-                seen = grouped_seen[known_name]
-                for eid in ids:
-                    iv = get_eid_int(eid)
-                    if iv not in seen:
-                        seen.add(iv)
-                        grouped[known_name].append(eid)
-                matched = True
+            if known_low == desc_low:
+                # Exact match — always wins
+                best_match = known_name
+                best_len = len(known_low)
                 break
+            if known_low in desc_low or desc_low in known_low:
+                # Prefer the longest matching known warning to avoid
+                # short strings grabbing unrelated warnings
+                if len(known_low) > best_len:
+                    best_match = known_name
+                    best_len = len(known_low)
+
+        if best_match is not None and best_len >= 20:
+            known_name = best_match
+            seen = grouped_seen[known_name]
+            for eid in ids:
+                iv = get_eid_int(eid)
+                if iv not in seen:
+                    seen.add(iv)
+                    grouped[known_name].append(eid)
+            matched = True
 
         if not matched:
             if desc not in ungrouped:
@@ -542,21 +656,28 @@ def collect_large_families(doc, app, fi_data=None):
 
     results = []
     try:
+        from pyrevit import forms
         collector = list(FilteredElementCollector(doc).OfClass(Family))
-        for fam in collector:
-            try:
-                name = fam.Name or u"Unknown"
-                if _is_system_family(fam):
-                    continue
-                sz = _measure_family_size(app, fam)
-                if sz is None or sz < MIN_FAMILY_SIZE:
-                    continue
-                inst_count = fam_instance_counts.get(name, 0)
-                results.append((name, sz, inst_count))
-            except Exception:
-                pass
-    except Exception:
-        pass
+        # Filter to loadable families only (skip system/in-place)
+        loadable = [f for f in collector if not _is_system_family(f)]
+        total = len(loadable)
+        with forms.ProgressBar(
+                title="Kidzink — Measuring family {value} of {max_value}") as pb:
+            for count, fam in enumerate(loadable, 1):
+                pb.update_progress(count, total)
+                try:
+                    name = fam.Name or u"Unknown"
+                    sz = _measure_family_size(app, fam)
+                    if sz is None or sz < MIN_FAMILY_SIZE:
+                        continue
+                    inst_count = fam_instance_counts.get(name, 0)
+                    results.append((name, sz, inst_count))
+                except Exception:
+                    pass
+    except Exception as _fam_err:
+        # Return a sentinel entry so the report shows the check failed
+        # rather than silently reporting "0 large families"
+        results.append((u"[Family sizing failed: {0}]".format(str(_fam_err)), 0, 0))
 
     return sorted(results, key=lambda x: x[1], reverse=True)
 
@@ -674,7 +795,9 @@ def _linked_cad_html(linked_cads):
         return (u'<div class="section-head">Linked CAD</div>'
                 u'<div class="acc-item acc-ok">'
                 u'<div class="acc-header acc-header-ok">'
-                u'<div class="acc-left"><div class="acc-title acc-title-ok">\u2713 No linked CAD found</div></div>'
+                u'<div class="acc-left">'
+                u'<div class="acc-title acc-title-ok">✓ No linked CAD found</div>'
+                u'</div>'
                 u'<span class="acc-badge acc-badge-ok">0</span>'
                 u'</div></div>')
 
@@ -686,6 +809,7 @@ def _linked_cad_html(linked_cads):
 
     rows = u""
     for name, count, eids in linked_cads:
+        name = _html_esc(name)
         if count > 1:
             count_str = u'<span class="link-count link-count-dup">' + str(count) + u' \u26a0</span>'
         else:
@@ -694,19 +818,22 @@ def _linked_cad_html(linked_cads):
         rows += (u'<div class="warn-row link-row">'
                  u'<span class="link-name">' + name + u'</span>'
                  + count_str +
-                 u'<button class="action-btn" style="padding:2px 8px;font-size:11px;" onclick="copyIds(this,\''
-                 + row_ids + u'\')"  >Copy IDs</button>'
+                 u'<button class="action-btn" style="padding:1px 7px;font-size:12px;" onclick="copyIds(this,\''
+                 + row_ids + u'\')">Copy IDs</button>'
                  u'</div>')
 
     return (u'<div class="section-head">Linked CAD</div>'
             u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
-            u'<div class="acc-left"><div class="acc-title acc-title-danger">Linked CAD Files</div></div>'
+            u'<div class="acc-left">'
+            u'<div class="acc-title acc-title-danger">Linked CAD Files</div>'
+            u'</div>'
             u'<div class="acc-right">'
             u'<span class="acc-badge acc-badge-danger">' + str(len(linked_cads)) + u' Files / ' + str(total_instances) + u' Instances</span>'
             u'<button class="action-btn" onclick="copyIds(this,\''
-            + id_list + u'\')" >Copy All IDs</button>'
-            u'</div></div>'
+            + id_list + u'\')">Copy All IDs</button>'
+            u'</div>'
+            u'</div>'
             u'<div class="warn-rows">'
             u'<div class="col-head"><span>CAD File Name</span><span class="col-count">Count</span><span style="float:right">IDs</span></div>'
             + rows +
@@ -759,7 +886,8 @@ def _fmt_size(size_bytes):
 # ---------------------------------------------------------------------------
 def _warn_group_html(desc, eids, show_zero=True, doc=None, level_elev_map=None):
     count = len(eids)
-    expl = WARNING_EXPLANATIONS.get(desc, u"")
+    expl = _html_esc(WARNING_EXPLANATIONS.get(desc, u""))
+    desc = _html_esc(desc)
 
     if count == 0:
         if not show_zero:
@@ -778,11 +906,9 @@ def _warn_group_html(desc, eids, show_zero=True, doc=None, level_elev_map=None):
     # Group element IDs by level when doc is available
     rows_html = u""
     if doc is not None:
-        # level_elev_map is pre-built once per report; fall back to empty dict
         elev_lookup = level_elev_map if level_elev_map is not None else {}
 
-        # Build level -> [eid_int, ...] mapping
-        level_map = {}   # level_name -> list of eid_int
+        level_map = {}
         for eid in eids:
             eid_int = get_eid_int(eid)
             level_name = None
@@ -798,7 +924,6 @@ def _warn_group_html(desc, eids, show_zero=True, doc=None, level_elev_map=None):
                 level_map[level_name] = []
             level_map[level_name].append(eid_int)
 
-        # Sort levels by elevation ascending; No Level sorts to top
         sorted_levels = sorted(
             level_map.keys(),
             key=lambda n: elev_lookup.get(n, -999999.0) if n != u"No Level" else -999999.0
@@ -807,31 +932,30 @@ def _warn_group_html(desc, eids, show_zero=True, doc=None, level_elev_map=None):
         for level_name in sorted_levels:
             level_eids = level_map[level_name]
             rows_html += (u'<div class="warn-level-head">'
-                          + level_name +
+                          + _html_esc(level_name) +
                           u' <span class="warn-level-count">(' + str(len(level_eids)) + u')</span>'
                           u'</div>')
             for eid_int in level_eids:
                 rows_html += (u'<div class="warn-row">'
                               u'<input type="checkbox" class="resolve-cb" onchange="toggleResolved(this)"/>'
                               u'<span class="eid">' + str(eid_int) + u'</span>'
-                              u'<button class="action-btn" style="padding:1px 7px;font-size:10px;margin-left:10px;" '
+                              u'<button class="action-btn" style="padding:1px 7px;font-size:12px;margin-left:10px;" '
                               u'onclick="copyIds(this,\'' + str(eid_int) + u'\')">Copy ID</button>'
                               u'</div>')
     else:
-        # Fallback: flat list (no doc)
         for eid in eids:
             eid_int = get_eid_int(eid)
             rows_html += (u'<div class="warn-row">'
                           u'<input type="checkbox" class="resolve-cb" onchange="toggleResolved(this)"/>'
                           u'<span class="eid">' + str(eid_int) + u'</span>'
-                          u'<button class="action-btn" style="padding:1px 7px;font-size:10px;margin-left:10px;" '
+                          u'<button class="action-btn" style="padding:1px 7px;font-size:12px;margin-left:10px;" '
                           u'onclick="copyIds(this,\'' + str(eid_int) + u'\')">Copy ID</button>'
                           u'</div>')
 
     return (u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
             u'<div class="acc-left">'
-            u'<div class="acc-title acc-title-danger">\u26a0\ufe0f ' + desc + u'</div>'
+            u'<div class="acc-title acc-title-danger">⚠️ ' + desc + u'</div>'
             + (u'<div class="acc-desc">' + expl + u'</div>' if expl else u'') +
             u'</div>'
             u'<div class="acc-right">'
@@ -851,12 +975,15 @@ def _linked_models_html(links):
         return (u'<div class="section-head">Linked Models</div>'
                 u'<div class="acc-item acc-ok">'
                 u'<div class="acc-header acc-header-ok">'
-                u'<div class="acc-left"><div class="acc-title acc-title-ok">\u2713 No linked models found</div></div>'
+                u'<div class="acc-left">'
+                u'<div class="acc-title acc-title-ok">✓ No linked models found</div>'
+                u'</div>'
                 u'<span class="acc-badge acc-badge-ok">0</span>'
                 u'</div></div>')
 
     rows = u""
     for name, count, pinned in links:
+        name = _html_esc(name)
         if count == 0:
             count_str = u'<span class="link-count link-count-unloaded">\u2014</span>'
         elif count > 1:
@@ -874,11 +1001,15 @@ def _linked_models_html(links):
     return (u'<div class="section-head">Linked Models</div>'
             u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
-            u'<div class="acc-left"><div class="acc-title acc-title-danger">Linked Revit Models</div></div>'
+            u'<div class="acc-left">'
+            u'<div class="acc-title acc-title-danger">Linked Revit Models</div>'
+            u'</div>'
             u'<span class="acc-badge acc-badge-danger">' + str(len(links)) + u'</span>'
             u'</div>'
             u'<div class="warn-rows">'
-            u'<div class="col-head"><span>Model Name</span><span class="col-count">Count</span><span style="float:right">Status</span></div>'
+            u'<div class="col-head"><span>Model Name</span>'
+            u'<span class="col-count">Count</span>'
+            u'<span style="float:right">Status</span></div>'
             + rows +
             u'</div></div>')
 
@@ -888,12 +1019,15 @@ def _large_families_html(families):
         return (u'<div class="section-head">Large Families (\u2265 1 MB)</div>'
                 u'<div class="acc-item acc-ok">'
                 u'<div class="acc-header acc-header-ok">'
-                u'<div class="acc-left"><div class="acc-title acc-title-ok">\u2713 No families \u2265 1 MB found</div></div>'
+                u'<div class="acc-left">'
+                u'<div class="acc-title acc-title-ok">\u2713 No families \u2265 1 MB found</div>'
+                u'</div>'
                 u'<span class="acc-badge acc-badge-ok">0</span>'
                 u'</div></div>')
 
     rows = u""
     for name, size, inst_count in families:
+        name = _html_esc(name)
         if inst_count > 1:
             count_cell = u'<span class="link-count link-count-dup">' + str(inst_count) + u'</span>'
         elif inst_count == 1:
@@ -908,15 +1042,15 @@ def _large_families_html(families):
     return (u'<div class="section-head">Large Families (\u2265 1 MB)</div>'
             u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
-            u'<div class="acc-left"><div class="acc-title acc-title-danger">Families \u2265 1 MB \u2014 sorted by file size</div></div>'
+            u'<div class="acc-left">'
+            u'<div class="acc-title acc-title-danger">Families \u2265 1 MB \u2014 sorted by file size</div>'
+            u'</div>'
             u'<span class="acc-badge acc-badge-danger">' + str(len(families)) + u'</span>'
             u'</div>'
             u'<div class="warn-rows">'
-            u'<div class="col-head">'
-            u'<span>Family Name</span>'
+            u'<div class="col-head"><span>Family Name</span>'
             u'<span class="col-count">Count</span>'
-            u'<span style="float:right">Size</span>'
-            u'</div>'
+            u'<span style="float:right">Size</span></div>'
             + rows +
             u'</div></div>')
 
@@ -926,31 +1060,39 @@ def _imported_cad_html(cads):
         return (u'<div class="section-head">Imported CAD</div>'
                 u'<div class="acc-item acc-ok">'
                 u'<div class="acc-header acc-header-ok">'
-                u'<div class="acc-left"><div class="acc-title acc-title-ok">\u2713 No imported CAD found</div></div>'
+                u'<div class="acc-left">'
+                u'<div class="acc-title acc-title-ok">✓ No imported CAD found</div>'
+                u'</div>'
                 u'<span class="acc-badge acc-badge-ok">0</span>'
                 u'</div></div>')
 
     id_list = ",".join([str(eid) for _n, eid in cads])
     rows = u""
     for name, eid in cads:
+        name = _html_esc(name)
         rows += (u'<div class="warn-row link-row">'
                  u'<span class="link-name">' + name + u'</span>'
-                 u'<span style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0;">'
+                 u'<span style="margin-left:auto;display:flex;align-items:center;gap:8px;">'
                  u'<span class="eid" style="font-family:monospace;color:#444;">' + str(eid) + u'</span>'
-                 u'<button class="action-btn" style="padding:1px 7px;font-size:10px;" '
+                 u'<button class="action-btn" style="padding:1px 7px;font-size:12px;" '
                  u'onclick="copyIds(this,\'' + str(eid) + u'\')">Copy ID</button>'
                  u'</span>'
                  u'</div>')
     return (u'<div class="section-head">Imported CAD</div>'
             u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
-            u'<div class="acc-left"><div class="acc-title acc-title-danger">Imported CAD Instances</div></div>'
+            u'<div class="acc-left">'
+            u'<div class="acc-title acc-title-danger">Imported CAD Instances</div>'
+            u'</div>'
             u'<div class="acc-right">'
             u'<span class="acc-badge acc-badge-danger">' + str(len(cads)) + u'</span>'
-            u'<button class="action-btn" onclick="copyIds(this,\'' + id_list + u'\')">Copy IDs</button>'
-            u'</div></div>'
+            u'<button class="action-btn" onclick="copyIds(this,\''
+            + id_list + u'\')">Copy IDs</button>'
+            u'</div>'
+            u'</div>'
             u'<div class="warn-rows">'
-            u'<div class="col-head"><span>CAD Name</span><span style="float:right">Element ID</span></div>'
+            u'<div class="col-head"><span>CAD Name</span>'
+            u'<span style="float:right">Element ID</span></div>'
             + rows +
             u'</div></div>')
 
@@ -960,29 +1102,36 @@ def _generic_models_html(generics):
         return (u'<div class="section-head">Generic Models</div>'
                 u'<div class="acc-item acc-ok">'
                 u'<div class="acc-header acc-header-ok">'
-                u'<div class="acc-left"><div class="acc-title acc-title-ok">\u2713 No generic models found</div></div>'
+                u'<div class="acc-left">'
+                u'<div class="acc-title acc-title-ok">✓ No generic models found</div>'
+                u'</div>'
                 u'<span class="acc-badge acc-badge-ok">0</span>'
                 u'</div></div>')
 
     id_list = u",".join([str(eid) for _n, eid in generics])
     rows = u""
     for name, eid in generics:
+        name = _html_esc(name)
         rows += (u'<div class="warn-row link-row">'
                  u'<span class="link-name">' + name + u'</span>'
-                 u'<span style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0;">'
+                 u'<span style="margin-left:auto;display:flex;align-items:center;gap:8px;">'
                  u'<span class="eid">' + str(eid) + u'</span>'
-                 u'<button class="action-btn" style="padding:1px 7px;font-size:10px;" '
+                 u'<button class="action-btn" style="padding:1px 7px;font-size:12px;" '
                  u'onclick="copyIds(this,\'' + str(eid) + u'\')">Copy ID</button>'
                  u'</span>'
                  u'</div>')
     return (u'<div class="section-head">Generic Models</div>'
             u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
-            u'<div class="acc-left"><div class="acc-title acc-title-danger">Generic Model Instances</div></div>'
+            u'<div class="acc-left">'
+            u'<div class="acc-title acc-title-danger">Generic Model Instances</div>'
+            u'</div>'
             u'<div class="acc-right">'
             u'<span class="acc-badge acc-badge-danger">' + str(len(generics)) + u'</span>'
-            u'<button class="action-btn" onclick="copyIds(this,\'' + id_list + u'\')">Copy IDs</button>'
-            u'</div></div>'
+            u'<button class="action-btn" onclick="copyIds(this,\''
+            + id_list + u'\')">Copy IDs</button>'
+            u'</div>'
+            u'</div>'
             u'<div class="warn-rows">'
             u'<div class="col-head"><span>Family : Type</span><span style="float:right">Element ID</span></div>'
             + rows +
@@ -1037,17 +1186,13 @@ def collect_in_place_families(doc, fi_data=None):
 
 
 def _in_place_families_html(in_place, doc, level_elev_map=None):
-    """
-    Render the In-Place Families section.
-    Groups instances by level (sorted by elevation), then by family name within each level.
-    Shows count per family name and a Copy All IDs button.
-    level_elev_map is pre-built once per report; pass it in to avoid repeated collector calls.
-    """
     if not in_place:
         return (u'<div class="section-head">In-Place Families</div>'
                 u'<div class="acc-item acc-ok">'
                 u'<div class="acc-header acc-header-ok">'
-                u'<div class="acc-left"><div class="acc-title acc-title-ok">\u2713 No in-place families found</div></div>'
+                u'<div class="acc-left">'
+                u'<div class="acc-title acc-title-ok">✓ No in-place families found</div>'
+                u'</div>'
                 u'<span class="acc-badge acc-badge-ok">0</span>'
                 u'</div></div>')
 
@@ -1057,8 +1202,7 @@ def _in_place_families_html(in_place, doc, level_elev_map=None):
 
     elev_lookup = level_elev_map if level_elev_map is not None else {}
 
-    # Group by level
-    level_map = {}   # level_name -> list of (fam_name, cat_name, eid_int)
+    level_map = {}
     for fam_name, cat_name, eid_int, level_name in in_place:
         if level_name not in level_map:
             level_map[level_name] = []
@@ -1072,7 +1216,6 @@ def _in_place_families_html(in_place, doc, level_elev_map=None):
     rows = u""
     for level_name in sorted_levels:
         entries = level_map[level_name]
-        # Sub-group by family name within the level for count display
         fam_counts = {}
         for fam_name, cat_name, eid_int in entries:
             key = fam_name
@@ -1081,14 +1224,14 @@ def _in_place_families_html(in_place, doc, level_elev_map=None):
             fam_counts[key]['eids'].append(eid_int)
 
         rows += (u'<div class="warn-level-head">'
-                 + level_name +
+                 + _html_esc(level_name) +
                  u' <span class="warn-level-count">(' + str(len(entries)) + u')</span>'
                  u'</div>')
 
-        # Sort family groups alphabetically within level
         for fam_name in sorted(fam_counts.keys()):
             fdata = fam_counts[fam_name]
-            cat_label = (u' \u2014 ' + fdata['cat']) if fdata['cat'] else u""
+            cat_label = (u' \u2014 ' + _html_esc(fdata['cat'])) if fdata['cat'] else u""
+            fam_name = _html_esc(fam_name)
             fam_eids = fdata['eids']
             fam_id_str = u",".join([str(e) for e in fam_eids])
             inst_count = len(fam_eids)
@@ -1100,21 +1243,24 @@ def _in_place_families_html(in_place, doc, level_elev_map=None):
 
             rows += (u'<div class="warn-row link-row">'
                      u'<span class="link-name">'
-                     + fam_name + u'<span style="color:#64748b;font-weight:400;">' + cat_label + u'</span>'
+                     + fam_name + u'<span style="color:#808080;font-weight:400;">' + cat_label + u'</span>'
                      u'</span>'
                      + count_cell +
-                     u'<button class="action-btn" style="padding:2px 8px;font-size:11px;" '
+                     u'<button class="action-btn" style="padding:1px 7px;font-size:12px;" '
                      u'onclick="copyIds(this,\'' + fam_id_str + u'\')">Copy IDs</button>'
                      u'</div>')
 
     return (u'<div class="section-head">In-Place Families</div>'
             u'<div class="acc-item acc-danger">'
             u'<div class="acc-header acc-header-danger">'
-            u'<div class="acc-left"><div class="acc-title acc-title-danger">In-Place Family Instances</div></div>'
+            u'<div class="acc-left">'
+            u'<div class="acc-title acc-title-danger">In-Place Family Instances</div>'
+            u'</div>'
             u'<div class="acc-right">'
             u'<span class="acc-badge acc-badge-danger">' + str(total_count) + u'</span>'
             u'<button class="action-btn" onclick="copyIds(this,\'' + id_list + u'\')">Copy All IDs</button>'
-            u'</div></div>'
+            u'</div>'
+            u'</div>'
             u'<div class="warn-rows">'
             u'<div class="col-head">'
             u'<span>Family Name \u2014 Category</span>'
@@ -1224,11 +1370,14 @@ def _export_3d_view_image(doc, view3d):
     # Build a full path without extension
     file_path = os.path.join(out_dir, base_name)
 
-    # Clean up old exports (any leftover from previous runs with same prefix)
+    # Clean up old exports (leftover from previous runs, >60s old to avoid races)
+    _now = time.time()
     for f in os.listdir(out_dir):
         if f.startswith("KZK_HealthCheck3D") and f.lower().endswith(".png"):
             try:
-                os.remove(os.path.join(out_dir, f))
+                fpath = os.path.join(out_dir, f)
+                if _now - os.path.getmtime(fpath) > 60:
+                    os.remove(fpath)
             except Exception:
                 pass
 
@@ -1294,15 +1443,6 @@ def _export_3d_view_image(doc, view3d):
 # ---------------------------------------------------------------------------
 # GAUGE SVG — multicolour arc (green / amber / red) with needle
 # ---------------------------------------------------------------------------
-def _needle_label_coords(score):
-    angle_deg = 180.0 - (score / 100.0 * 180.0)
-    angle_rad = math.radians(angle_deg)
-    cx, cy, r = 150, 140, 108
-    x = cx + r * math.cos(angle_rad)
-    y = cy - r * math.sin(angle_rad)
-    return round(x, 1), round(y, 1)
-
-
 def _gauge_svg(score):
     """
     Semicircular gauge: coloured arc fills only up to score position;
@@ -1311,51 +1451,43 @@ def _gauge_svg(score):
 
     Arc path: M 10 50 A 40 40 0 0 1 90 50  (r=40, cx=50, cy=50)
     Total half-circumference = pi * 40 = 125.664
-    Score fraction maps left→right: 0% = left end, 100% = right end.
+    Score fraction maps left-right: 0% = left end, 100% = right end.
     Colour bands (filled portion only):
-      red    0–33%   #ef4444
-      yellow 33–66%  #eab308
-      green  66–100% #22c55e
+      red    0-33%   #E43C2F
+      amber  33-66%  #FFBF00
+      green  66-100% #32CD32
     """
-    import math as _math
-    arc_total = _math.pi * 40.0          # 125.664
-    third = arc_total / 3.0              # 41.888
+    arc_total = math.pi * 40.0          # 125.664
+    third = arc_total / 3.0             # 41.888
     score_len = arc_total * (score / 100.0)
 
     # Which colour bands are visible, and how much of each
-    # Band 0: red   0 .. third
-    # Band 1: yellow third .. 2*third
-    # Band 2: green 2*third .. arc_total
     bands = [
-        (u'#ef4444',  0.0,          third),
-        (u'#eab308',  third,        third * 2),
-        (u'#22c55e',  third * 2,    arc_total),
+        (u'#E43C2F',  0.0,          third),
+        (u'#FFBF00',  third,        third * 2),
+        (u'#32CD32',  third * 2,    arc_total),
     ]
 
     # Score text colour = colour of the band the score falls in
     if score >= 66:
-        score_colour = u'#22c55e'
+        score_colour = u'#32CD32'
     elif score >= 33:
-        score_colour = u'#eab308'
+        score_colour = u'#FFBF00'
     else:
-        score_colour = u'#ef4444'
+        score_colour = u'#E43C2F'
 
     # Needle / limit-line position on the arc
-    # Arc angle: score=0 → 180° (left), score=100 → 0° (right)
-    # cx=50, cy=50, r=40
     cx, cy, r = 50.0, 50.0, 40.0
     needle_angle_deg = 180.0 - (score / 100.0 * 180.0)
-    needle_rad = _math.radians(needle_angle_deg)
-    # Inner and outer edge of the stroke (stroke-width=10, so ±5 from r)
+    needle_rad = math.radians(needle_angle_deg)
     r_inner = r - 7.0
     r_outer = r + 7.0
-    nx_inner = round(cx + r_inner * _math.cos(needle_rad), 2)
-    ny_inner = round(cy - r_inner * _math.sin(needle_rad), 2)
-    nx_outer = round(cx + r_outer * _math.cos(needle_rad), 2)
-    ny_outer = round(cy - r_outer * _math.sin(needle_rad), 2)
+    nx_inner = round(cx + r_inner * math.cos(needle_rad), 2)
+    ny_inner = round(cy - r_inner * math.sin(needle_rad), 2)
+    nx_outer = round(cx + r_outer * math.cos(needle_rad), 2)
+    ny_outer = round(cy - r_outer * math.sin(needle_rad), 2)
 
-    # Build SVG
-    # Background grey track (full arc)
+    # Build SVG — background grey track (full arc)
     svg = (
         u'<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg"'
         u' style="width:100%;height:auto;display:block;overflow:visible;">'
@@ -1365,14 +1497,11 @@ def _gauge_svg(score):
 
     # Coloured filled segments — only up to score_len
     for colour, band_start, band_end in bands:
-        # How much of this band is filled?
         seg_start = band_start
         seg_end   = min(band_end, score_len)
         if seg_end <= seg_start:
-            break   # score is below this band entirely
+            break
         seg_len = seg_end - seg_start
-        # dasharray: draw seg_len, then gap the rest
-        # dashoffset: negative offset to skip band_start
         svg += (
             u'<path d="M 10 50 A 40 40 0 0 1 90 50" fill="none"'
             u' stroke="' + colour + u'" stroke-width="10" stroke-linecap="butt"'
@@ -1485,6 +1614,13 @@ def build_html(doc, grouped, ungrouped, total_warnings, links, large_fams,
     score, grade_label, grade_colour, passed_checks, total_checks = _score(grouped, ungrouped)
     type_count = sum(1 for v in grouped.values() if len(v) > 0) + len(ungrouped)
 
+    # Escape metadata for safe HTML insertion
+    username = _html_esc(username)
+    pcname = _html_esc(pcname)
+    doc_name = _html_esc(doc_name)
+    project_name = _html_esc(project_name)
+    central_path_display = _html_esc(central_path_display)
+
     logo_uri = _get_logo_b64()
     if logo_uri:
         logo_slot_inner = u'<img id="logoImg" src="' + logo_uri + u'" alt="Logo"/>'
@@ -1517,137 +1653,134 @@ def build_html(doc, grouped, ungrouped, total_warnings, links, large_fams,
                                             level_elev_map=level_elev_map)
     gauge_svg = _gauge_svg(score)
 
-    if view_b64:
-        view_img_html = u'<img src="' + view_b64 + u'" alt=""/>'
-    else:
-        view_img_html = u''
-
     tw = str(total_warnings)
     tc = str(type_count)
     aff = str(affected)
     tel = str(total_elements)
 
-    path_bar_html = u''  # kept for compatibility (no longer used as separate bar)
+    # Path strip
+    path_strip_html = u''
     if central_path_display:
         _esc_path = central_path_display.replace(u"'", u"\\'")
         path_strip_html = (u'<div>Path: <span class="path-box">' + central_path_display + u'</span>'
                            u'<button class="path-copy-btn" onclick="copyPath(this,\''
                            + _esc_path + u'\')">Copy Path</button>'
                            u'</div>')
-    else:
-        path_strip_html = u''
 
-    # KPI 4: health score — gauge SVG
-    kpi4_colour = grade_colour
-    kpi4_style = u'color:' + kpi4_colour + u';'
+    # KPI 4: health score \u2014 gauge SVG
     gauge_svg = _gauge_svg(score)
 
     html = (
         u'<!DOCTYPE html><html lang="en"><head>'
         u'<meta charset="UTF-8"/>'
         u'<meta name="viewport" content="width=device-width, initial-scale=1.0"/>'
-        u'<title>Kidzink \u2014 Revit Health Check \u2014 ' + project_name + u'</title>'
+        u'<title>Kidzink \u2014 Revit Health Check' + _disc_label + u' \u2014 ' + project_name + u'</title>'
         u'<style>'
         u"@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');"
         u'*{box-sizing:border-box;margin:0;padding:0;}'
-        u"body{font-family:'Manrope',sans-serif;font-size:13px;color:#1e293b;background:#f8fafc;padding:24px;}"
-        u'.page{width:100%;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.10);}'
-        u'.kzk-header{background:#E43C2F;color:#fff;padding:18px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;}'
+        u"body{font-family:'Manrope',sans-serif;font-size:13px;color:#000000;background:#C0C0C0;padding:24px;}"
+        u'.page{width:100%;background:#FFFFFF;border-radius:8px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.10);}'
+        u'.kzk-header{background:#E43C2F;color:#FFFFFF;padding:18px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;}'
         u'.header-left{display:flex;align-items:center;gap:16px;}'
         u'.logo-slot{height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;position:relative;}'
         u'.logo-slot img{max-height:44px;width:auto;height:auto;object-fit:contain;}'
         u'.logo-slot input{position:absolute;inset:0;opacity:0;cursor:pointer;}'
-        u'.logo-ph{font-size:11px;color:rgba(255,255,255,0.75);pointer-events:none;border:1px dashed rgba(255,255,255,0.5);border-radius:4px;padding:6px 12px;}'
+        u'.logo-ph{font-size:12px;color:rgba(255,255,255,0.75);pointer-events:none;border:1px dashed rgba(255,255,255,0.5);border-radius:4px;padding:6px 12px;}'
         u'.header-title h1{font-size:20px;font-weight:600;margin:0;}'
         u'.header-title p{font-size:13px;color:rgba(255,255,255,0.82);margin-top:2px;}'
         u'.header-meta{text-align:right;font-size:12px;color:rgba(255,255,255,0.85);line-height:1.7;}'
-        u'.header-meta strong{color:#fff;}'
-        u'.file-strip{background:#1e293b;color:#cbd5e1;padding:10px 24px;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #334155;flex-wrap:wrap;gap:8px;}'
-        u'.file-strip strong{color:#fff;}'
-        u'.path-box{font-family:monospace;background:rgba(0,0,0,0.25);padding:3px 8px;border-radius:4px;color:#93c5fd;font-size:12px;word-break:break-all;}'
-        u'.path-copy-btn{background:#334155;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;margin-left:8px;}'
-        u'.path-copy-btn:hover{background:#475569;}'
-        u'.path-copy-btn.copied{background:#3B6D11;}'
-        u'.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:20px 24px;background:#f8fafc;}'
-        u'.kpi-card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.05);}'
-        u'.kpi-title{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;}'
-        u'.kpi-value{font-size:36px;font-weight:700;margin:8px 0 0;color:#1e293b;}'
-        u'.kpi-value.danger{color:#ef4444;}'
-        u'.kpi-sub{font-size:11px;color:#64748b;margin-top:4px;}'
-        u'.gauge-card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;flex-direction:column;align-items:center;justify-content:center;}'
-        u'.gauge-title{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;}'
+        u'.header-meta strong{color:#FFFFFF;}'
+        u'.file-strip{background:#808080;color:#FFFFFF;padding:10px 24px;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #808080;flex-wrap:wrap;gap:8px;}'
+        u'.file-strip strong{color:#FFFFFF;}'
+        u'.path-box{font-family:monospace;background:rgba(0,0,0,0.25);padding:3px 8px;border-radius:4px;color:#FFFFFF;font-size:12px;word-break:break-all;}'
+        u'.path-copy-btn{background:#C0C0C0;color:#000000;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;margin-left:8px;}'
+        u'.path-copy-btn:hover{background:#FFFFFF;}'
+        u'.path-copy-btn.copied{background:#808080;color:#FFFFFF;}'
+        u'.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:20px 24px;background:#FFFFFF;}'
+        u'.kpi-card{background:#FFFFFF;border:1px solid #C0C0C0;border-radius:8px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.05);}'
+        u'.kpi-title{font-size:12px;font-weight:700;color:#808080;text-transform:uppercase;letter-spacing:0.5px;}'
+        u'.kpi-value{font-size:36px;font-weight:700;margin:8px 0 0;color:#000000;}'
+        u'.kpi-value.danger{color:#E43C2F;}'
+        u'.kpi-sub{font-size:12px;color:#808080;margin-top:4px;}'
+        u'.gauge-card{background:#FFFFFF;border:1px solid #C0C0C0;border-radius:8px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.05);display:flex;flex-direction:column;align-items:center;justify-content:center;}'
+        u'.gauge-title{font-size:12px;font-weight:700;color:#808080;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;}'
         u'.gauge-wrap{width:100%;max-width:180px;position:relative;}'
         u'.gauge-grade{font-size:15px;font-weight:700;margin-top:10px;}'
-        u'.gauge-sub{font-size:11px;color:#64748b;margin-top:3px;}'
-        u'.view-strip{padding:0 24px 16px;background:#f8fafc;}'
-        u'.view-box{background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;width:100%;}'
+        u'.gauge-sub{font-size:12px;color:#808080;margin-top:3px;}'
+        u'.view-strip{padding:0 24px 16px;background:#FFFFFF;}'
+        u'.view-box{background:#FFFFFF;border:1px solid #C0C0C0;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;width:100%;}'
         u'.view-box img{width:100%;height:auto;display:block;object-fit:contain;}'
-        u'.section-head{font-size:11px;font-weight:700;color:#64748b;letter-spacing:0.5px;text-transform:uppercase;margin:8px 24px 10px;}'
+        u'.section-head{font-size:12px;font-weight:700;color:#808080;letter-spacing:0.5px;text-transform:uppercase;margin:8px 24px 10px;}'
         u'.section-head:first-of-type{margin-top:4px;}'
-        u'.acc-item{border-radius:6px;border:1px solid #e2e8f0;margin:0 24px 10px;overflow:hidden;}'
-        u'.acc-item.acc-ok{border-left:5px solid #10b981;}'
-        u'.acc-item.acc-danger{border-left:5px solid #ef4444;}'
+        u'.acc-item{border-radius:6px;border:1px solid #C0C0C0;margin:0 24px 10px;overflow:hidden;}'
+        u'.acc-item.acc-ok{border-left:5px solid #32CD32;}'
+        u'.acc-item.acc-danger{border-left:5px solid #E43C2F;}'
         u'.acc-header{padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;}'
-        u'.acc-header.acc-header-ok{background:#f0fdf4;}'
-        u'.acc-header.acc-header-danger{background:#fef2f2;}'
+        u'.acc-header.acc-header-ok{background:#FFFFFF;}'
+        u'.acc-header.acc-header-danger{background:#FFFFFF;}'
         u'.acc-left{flex:1;}'
         u'.acc-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}'
         u'.acc-title{font-weight:600;font-size:14px;margin-bottom:3px;}'
-        u'.acc-title.acc-title-ok{color:#166534;}'
-        u'.acc-title.acc-title-danger{color:#991b1b;}'
-        u'.acc-desc{font-size:12px;color:#64748b;margin:0;}'
+        u'.acc-title.acc-title-ok{color:#808080;}'
+        u'.acc-title.acc-title-danger{color:#E43C2F;}'
+        u'.acc-desc{font-size:12px;color:#808080;margin:0;}'
         u'.acc-badge{padding:3px 12px;border-radius:12px;font-weight:700;font-size:12px;white-space:nowrap;}'
-        u'.acc-badge.acc-badge-ok{background:#dcfce7;color:#166534;}'
-        u'.acc-badge.acc-badge-danger{background:#fee2e2;color:#991b1b;}'
-        u'.action-btn{background:#ef4444;color:#fff;border:none;padding:5px 14px;border-radius:4px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap;}'
-        u'.action-btn:hover{background:#dc2626;}'
-        u'.action-btn.copied{background:#3B6D11;}'
-        u'.warn-rows{background:#fafafa;}'
-        u'.col-head{padding:4px 14px;background:#f1f5f9;font-size:10px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-top:1px solid #e2e8f0;}'
-        u'.warn-row{padding:5px 14px;border-bottom:0.5px solid #e2e8f0;font-size:11px;display:flex;align-items:center;gap:8px;}'
-        u'.warn-row .eid{font-family:monospace;color:#475569;}'
-        u'.resolve-cb{width:14px;height:14px;accent-color:#10b981;cursor:pointer;flex-shrink:0;}'
-        u'.warn-row.resolved{background:#f0fdf4;text-decoration:line-through;color:#999;}'
-        u'.warn-row.resolved .eid{color:#999;}'
-        u'.warn-level-head{padding:4px 14px;background:#f1f5f9;font-size:10px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:0.05em;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;}'
-        u'.warn-level-count{font-weight:500;color:#64748b;}'
-        u'.link-row{display:flex;align-items:center;justify-content:space-between;}'
-        u'.link-name{font-size:12px;color:#1e293b;}'
+        u'.acc-badge.acc-badge-ok{background:#C0C0C0;color:#000000;}'
+        u'.acc-badge.acc-badge-danger{background:#E43C2F;color:#FFFFFF;}'
+        u'.action-btn{background:#E43C2F;color:#FFFFFF;border:none;padding:5px 14px;border-radius:4px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap;}'
+        u'.action-btn:hover{background:#E43C2F;opacity:0.9;}'
+        u'.action-btn.copied{background:#808080;}'
+        u'.warn-rows{background:#FFFFFF;}'
+        u'.col-head{padding:4px 14px;background:#C0C0C0;font-size:12px;color:#000000;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-top:1px solid #C0C0C0;}'
+        u'.warn-row{padding:5px 14px;border-bottom:0.5px solid #C0C0C0;font-size:12px;display:flex;align-items:center;gap:8px;}'
+        u'.warn-row .eid{font-family:monospace;color:#000000;}'
+        u'.resolve-cb{width:14px;height:14px;accent-color:#808080;cursor:pointer;flex-shrink:0;}'
+        u'.warn-row.resolved{background:#C0C0C0;text-decoration:line-through;color:#808080;}'
+        u'.warn-row.resolved .eid{color:#808080;}'
+        u'.warn-level-head{padding:4px 14px;background:#C0C0C0;font-size:12px;font-weight:700;color:#000000;text-transform:uppercase;letter-spacing:0.05em;border-top:1px solid #C0C0C0;border-bottom:1px solid #C0C0C0;}'
+        u'.warn-level-count{font-weight:500;color:#808080;}'
+        u'.link-row{display:flex;align-items:center;justify-content:space-between;position:relative;}'
+        u'.link-name{font-size:12px;color:#000000;}'
         u'.link-status{font-size:12px;font-weight:600;}'
-        u'.link-status.pinned{color:#10b981;}'
-        u'.link-status.unpinned{color:#ef4444;}'
-        u'.col-count{position:absolute;left:50%;transform:translateX(-50%);text-align:center;}'
-        u'.link-row{position:relative;}'
-        u'.link-count{font-size:12px;font-weight:600;color:#1e293b;position:absolute;left:50%;transform:translateX(-50%);}'
-        u'.link-count-dup{color:#ef4444!important;}'
+        u'.link-status.pinned{color:#808080;}'
+        u'.link-status.unpinned{color:#E43C2F;}'
+        u'.link-count{font-size:12px;font-weight:600;color:#000000;position:absolute;left:50%;transform:translateX(-50%);}'
+        u'.link-count-dup{color:#E43C2F!important;}'
         u'.link-count-unloaded{color:#808080!important;font-style:italic;}'
+        u'.col-count{position:absolute;left:50%;transform:translateX(-50%);text-align:center;}'
         u'.fam-row{display:flex;align-items:center;justify-content:space-between;}'
-        u'.fam-name{font-size:12px;color:#1e293b;}'
-        u'.fam-size{font-size:12px;font-weight:600;color:#ef4444;font-family:monospace;}'
-        u'.footer-bar{display:flex;justify-content:center;align-items:center;position:relative;padding:14px 24px;border-top:1px solid #e2e8f0;margin-top:16px;}'
+        u'.fam-name{font-size:12px;color:#000000;}'
+        u'.fam-size{font-size:12px;font-weight:600;color:#E43C2F;font-family:monospace;}'
+        u'.footer-bar{display:flex;justify-content:center;align-items:center;position:relative;padding:14px 24px;border-top:1px solid #C0C0C0;margin-top:16px;}'
         u'.footer-bar a{color:#E43C2F;font-size:12px;font-weight:500;text-decoration:none;}'
-        u'.footer-copy{color:#64748b;font-size:10px;position:absolute;right:24px;}'
-        u"#toast{display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:8px 20px;border-radius:4px;font-size:12px;z-index:999;font-family:'Manrope',sans-serif;}"
+        u'.footer-copy{color:#000000;font-size:12px;position:absolute;right:24px;}'
+        u"#toast{display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#808080;color:#FFFFFF;padding:8px 20px;border-radius:4px;font-size:12px;z-index:999;font-family:'Manrope',sans-serif;}"
         u'#toast.show{display:block;}'
-        u'@media print{body{background:#fff;padding:0;}.page{box-shadow:none;border-radius:0;}.action-btn{display:none;}.path-copy-btn{display:none;}#toast{display:none!important;}.resolve-cb{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}'
+        u'@media print{body{background:#FFFFFF;padding:0;}.page{box-shadow:none;border-radius:0;}.action-btn{display:none;}.path-copy-btn{display:none;}#toast{display:none!important;}.resolve-cb{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}'
         u'</style></head><body><div class="page">'
+
+        # Header
         u'<div class="kzk-header">'
         u'<div class="header-left">'
         + logo_html +
         u'<div class="header-title">'
-        u'<h1>Revit Health Check</h1>'
+        u'<h1>Revit Health Check' + _disc_label + u'</h1>'
         u'<p>' + project_name + u'</p>'
         u'</div></div>'
         u'<div class="header-meta">'
         u'Exported: <strong>' + export_date + u'</strong><br>'
         u'@' + username + u' | ' + pcname + u' | Revit ' + rvt_version +
         u'</div></div>'
+
+        # File strip
         u'<div class="file-strip">'
         u'<div>Model: <strong>' + doc_name + u'</strong>'
         + (u' (' + file_size_str + u')' if file_size_str else u'') +
         u'</div>'
         + path_strip_html +
         u'</div>'
+
+        # KPI grid (4 columns)
         u'<div class="kpi-grid">'
         u'<div class="kpi-card"><div class="kpi-title">Total Warnings</div>'
         u'<div class="kpi-value danger">' + tw + u'</div></div>'
@@ -1660,8 +1793,12 @@ def build_html(doc, grouped, ungrouped, total_warnings, links, large_fams,
         u'<div class="gauge-grade" style="color:' + grade_colour + u';">' + grade_label + u'</div>'
         u'<div class="gauge-sub">' + str(passed_checks) + u' / ' + str(total_checks) + u' Checks Passed</div>'
         u'</div></div>'
+
+        # 3D view strip
         + (u'<div class="view-strip"><div class="view-box"><img src="' + view_b64 + u'" alt=""/></div></div>'
            if view_b64 else u'') +
+
+        # Section head + groups
         u'<div class="section-head">Warning details \u2014 grouped by type</div>'
         + groups_html
         + links_html
@@ -1721,9 +1858,10 @@ def main():
     if doc.IsFamilyDocument:
         _bring_revit_forward()
         from pyrevit.forms import alert
+        from pyrevit import script
         alert("Health Check is not available for Family documents.",
-              title="Kidzink - Health Check")
-        sys.exit(0)
+              title="Kidzink - Health Check" + _disc_label)
+        script.exit()
 
     # collect
     grouped, ungrouped, total_warnings = collect_warnings(doc)
@@ -1736,9 +1874,22 @@ def main():
     generic_models = collect_generic_models(doc)
     in_place_fams = collect_in_place_families(doc, fi_data=fi_data)
 
-    # create / find 3D view and export image
+    # create / find 3D view, export image, then delete the temp view
     view3d = _create_or_get_3d_view(doc)
     view_b64 = _export_3d_view_image(doc, view3d)
+
+    # Clean up the temporary 3D view so it doesn't persist in the model
+    if view3d is not None:
+        tx_del = Transaction(doc, "Delete Health Check 3D View")
+        try:
+            tx_del.Start()
+            doc.Delete(view3d.Id)
+            tx_del.Commit()
+        except Exception:
+            try:
+                tx_del.RollBack()
+            except Exception:
+                pass
 
     # build html
     html = build_html(doc, grouped, ungrouped, total_warnings,
@@ -1749,13 +1900,13 @@ def main():
     model_name = doc.Title or "UnsavedModel"
     model_name = re.sub(r'[<>:"/\\|?*]', '_', model_name)
     time_stamp = datetime.datetime.now().strftime("%y%m%d_%H%M")
-    fname = model_name + "_" + time_stamp + ".html"
+    fname = model_name + "_" + time_stamp + _disc_view_suffix + ".html"
     import clr
     clr.AddReference("System.Windows.Forms")
     from System.Windows.Forms import SaveFileDialog, DialogResult
 
     dlg = SaveFileDialog()
-    dlg.Title = "Kidzink - Save Health Check Report"
+    dlg.Title = "Kidzink - Save" + _disc_label + " Health Check Report"
     dlg.FileName = fname
     dlg.Filter = "HTML File (*.html)|*.html"
     dlg.DefaultExt = "html"
@@ -1778,7 +1929,7 @@ def main():
     with open(outpath, "wb") as f:
         f.write(html.encode("utf-8"))
 
-    subprocess.Popen('start "" "' + outpath + '"', shell=True)
+    os.startfile(outpath)
 
 
 try:
