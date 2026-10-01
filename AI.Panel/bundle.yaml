@@ -1,0 +1,6 @@
+name: Revit Chat
+button_description: AI chat assistant powered by local Ollama LLM. Create schedules, count elements, list views and more using plain English.
+tooltip: Chat with your Revit model using AI (requires Ollama running locally)
+author: Archie C. Manza
+min_revit_ver: 2025
+max_revit_ver: 2026
